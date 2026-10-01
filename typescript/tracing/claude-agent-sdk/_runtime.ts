@@ -16,6 +16,7 @@ type QueryFunction = (args: Record<string, unknown>) => AsyncIterable<unknown> |
 
 export interface Runtime {
   query: QueryFunction;
+  prewarm: typeof ClaudeAgentSDKExports.prewarm;
   respan: Respan;
   runId: string;
   options: Record<string, unknown>;
@@ -57,7 +58,7 @@ export async function createRuntime(appName: string): Promise<Runtime> {
   const gatewayBaseURL = (
     process.env.RESPAN_GATEWAY_BASE_URL ?? DEFAULT_GATEWAY_BASE_URL
   ).replace(/\/+$/, "");
-  const runId = `claude-agent-sdk-ts-${Date.now()}`;
+  const runId = process.env.RESPAN_EXAMPLE_RUN_ID ?? `claude-agent-sdk-ts-${Date.now()}`;
   const sdkModule = { ...ClaudeAgentSDKExports } as Record<string, unknown>;
 
   const respan = new Respan({
@@ -92,6 +93,7 @@ export async function createRuntime(appName: string): Promise<Runtime> {
 
   return {
     query: sdkModule.query as QueryFunction,
+    prewarm: sdkModule.prewarm as typeof ClaudeAgentSDKExports.prewarm,
     respan,
     runId,
     options,

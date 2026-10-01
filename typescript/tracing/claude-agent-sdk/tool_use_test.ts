@@ -6,7 +6,7 @@
  */
 
 import "dotenv/config";
-import { queryForResult } from "./_sdk_runtime";
+import { queryForResult } from "./_sdk_runtime.js";
 
 if (!process.env.RESPAN_API_KEY) {
   throw new Error("Set RESPAN_API_KEY to run this example.");
