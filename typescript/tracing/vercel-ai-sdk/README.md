@@ -20,3 +20,6 @@ Examples:
 - `05_generate_object.mjs`: structured object generation.
 - `06_embed_many.mjs`: batch embeddings.
 - `07_tool_loop_agent.mjs`: `ToolLoopAgent` with a deterministic tool.
+- `08_audio.mjs`: speech, transcription, streaming transcription, a controlled failure, and content opt-out through the real AI SDK 7.0.126 telemetry adapter. Uses official mock providers; no provider API key or audio service is needed. Audio spans contain text and audio size/format descriptors, because the adapter does not emit audio bytes.
+
+Run `npm run audio` for the five deterministic audio scenarios. `RESPAN_EXAMPLE_RUN_ID` sets a shared `metadata.run_id` marker for platform verification. These examples link the sibling Respan checkout; build its tracing, core, and Vercel instrumentation packages before running them.

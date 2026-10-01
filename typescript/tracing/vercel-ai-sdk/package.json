@@ -12,16 +12,17 @@
     "embed-many": "node 06_embed_many.mjs",
     "agent": "node 07_tool_loop_agent.mjs",
     "test": "node --test tests/*.test.mjs",
-    "all": "npm run text && npm run tools && npm run embed && npm run stream && npm run object && npm run embed-many && npm run agent"
+    "all": "npm run text && npm run tools && npm run embed && npm run stream && npm run object && npm run embed-many && npm run agent && npm run audio",
+    "audio": "node 08_audio.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.7",
-    "@ai-sdk/otel": "1.0.15",
+    "@ai-sdk/otel": "1.0.126",
     "@respan/instrumentation-vercel": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-vercel",
     "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
     "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
     "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "ai": "7.0.15",
+    "ai": "7.0.126",
     "dotenv": "^16.4.7",
     "zod": "^4.1.8"
   }
