@@ -1,0 +1,31 @@
+{
+  "name": "respan-dify-typescript-examples",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "01:chat": "tsx 01_chat_blocking.ts",
+    "02:streaming": "tsx 02_chat_streaming.ts",
+    "03:workflow": "tsx 03_completion_workflow.ts",
+    "04:knowledge": "tsx 04_knowledge_workspace.ts",
+    "05:file-error": "tsx 05_file_and_error.ts",
+    "examples": "tsx run_all.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@respan/instrumentation-dify": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-dify",
+    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
+    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
+    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
+    "dify-client": "3.1.0",
+    "dotenv": "^16.4.7",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29"
+  }
+}

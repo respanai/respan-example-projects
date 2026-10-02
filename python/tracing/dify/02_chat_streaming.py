@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Streaming Dify chat message traced after stream consumption."""
 
 from _shared import DifyExampleRuntime, collect_stream_answer, print_result

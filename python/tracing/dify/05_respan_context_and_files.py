@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Dify file upload plus Respan propagated attributes."""
 
 from _shared import DifyExampleRuntime, print_result, sample_file

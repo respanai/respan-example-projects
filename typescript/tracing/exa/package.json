@@ -1,0 +1,28 @@
+{
+  "name": "respan-exa-typescript-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript Exa instrumentation examples for Respan",
+  "type": "module",
+  "scripts": {
+    "01:core": "tsx 01_core.ts",
+    "02:streaming": "tsx 02_streaming.ts",
+    "03:agent-research-tools": "tsx 03_agent_research_tools.ts",
+    "04:expected-error": "tsx 04_expected_error.ts",
+    "all": "tsx run_all.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@respan/instrumentation-exa": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-exa",
+    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
+    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
+    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
+    "dotenv": "^17.2.3",
+    "exa-js": "2.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1"
+  }
+}

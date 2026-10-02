@@ -12,6 +12,8 @@ python/
     openai-agents-sdk/    # OpenAI Agents SDK with Respan tracing (basic, patterns, handoffs, tools, research bot)
     claude-agent-sdk/     # Claude Agent SDK with Respan tracing
     dspy/                 # DSPy native instrumentation examples
+    dify/                 # Dify sync/async, streaming, workflow, file, and knowledge APIs
+    exa/                  # Exa search, contents, answer, streaming, Agent, and Research APIs
     langfuse/             # Langfuse integration example
     instructor/           # Instructor library example
     langchain/            # LangChain agent example
@@ -28,7 +30,10 @@ typescript/
     respan-tracing-sdk/   # Core @respan/tracing SDK examples (basic, advanced, span management, multi-provider)
       nextjs-openai/      # Next.js + OpenAI with @respan/tracing directly
     claude-agent-sdk/     # Claude Agent SDK with Respan tracing
+    dify/                 # Official Dify Node SDK instrumentation examples
     eve/                  # Eve agent framework with Respan tracing
+    exa/                  # Official Exa JavaScript SDK instrumentation examples
+    n8n/                  # n8n native OpenTelemetry bridge and real 2.37.7 service smoke
     vercel-tracing/       # Vercel AI SDK + Next.js with @respan/exporter-vercel
     mastra/               # Mastra framework with @respan/exporter-vercel
   gateway/

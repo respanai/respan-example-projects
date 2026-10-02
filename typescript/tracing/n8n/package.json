@@ -1,0 +1,27 @@
+{
+  "name": "respan-n8n-typescript-examples",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "example:deterministic": "node --import=@respan/instrumentation-n8n/register deterministic_native_spans.mjs",
+    "example:n8n": "node --import=@respan/instrumentation-n8n/register run_real_n8n_smoke.mjs",
+    "examples": "npm run example:deterministic && npm run example:n8n"
+  },
+  "dependencies": {
+    "@ai-sdk/otel": "1.0.87",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.221.0",
+    "@opentelemetry/resources": ">=2.10.0 <2.11.0",
+    "@opentelemetry/sdk-node": "^0.221.0",
+    "@opentelemetry/sdk-trace-base": ">=2.10.0 <2.11.0",
+    "@respan/instrumentation-n8n": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-n8n",
+    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
+    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
+    "n8n": "2.37.7",
+    "protobufjs": "^7.5.4"
+  }
+}

@@ -1,5 +1,6 @@
-#!/usr/bin/env python3
 """Dify workflow, parameters, conversations, messages, and feedback tracing."""
+
+import inspect
 
 from _shared import DifyExampleRuntime, print_result
 
@@ -9,17 +10,25 @@ def main() -> None:
     with DifyExampleRuntime(workflow_name) as runtime:
         raw_client = runtime.raw_client()
         chat_client = runtime.chat_client()
+        workflow_client = runtime.workflow_client()
         user = runtime.user("api")
 
-        workflow_response = raw_client._send_request(
-            "POST",
-            "/workflows/run",
-            json={
-                "inputs": {"query": "Summarize Dify tracing."},
-                "response_mode": "blocking",
-                "user": user,
-            },
-        )
+        if workflow_client is not None:
+            workflow_response = workflow_client.run(
+                inputs={"query": "Summarize Dify tracing."},
+                response_mode="blocking",
+                user=user,
+            )
+        else:
+            workflow_response = raw_client._send_request(
+                "POST",
+                "/workflows/run",
+                json={
+                    "inputs": {"query": "Summarize Dify tracing."},
+                    "response_mode": "blocking",
+                    "user": user,
+                },
+            )
         workflow_response.raise_for_status()
 
         parameters = chat_client.get_application_parameters(user=user)
@@ -37,11 +46,17 @@ def main() -> None:
             user=user,
         )
         feedback.raise_for_status()
-        rename = chat_client.rename_conversation(
-            conversation_id="conv-local-001",
-            name="Renamed local conversation",
-            user=user,
-        )
+        rename_kwargs = {
+            "conversation_id": "conv-local-001",
+            "name": "Renamed local conversation",
+            "user": user,
+        }
+        if (
+            "auto_generate"
+            in inspect.signature(chat_client.rename_conversation).parameters
+        ):
+            rename_kwargs["auto_generate"] = False
+        rename = chat_client.rename_conversation(**rename_kwargs)
         rename.raise_for_status()
 
         summary = {
