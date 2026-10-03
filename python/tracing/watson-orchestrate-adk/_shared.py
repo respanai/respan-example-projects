@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -92,96 +92,172 @@ def example_attributes(example_name: str, marker: str) -> Iterator[None]:
         yield
 
 
-def _create_run(
-    self: Any,
-    message: str,
-    agent_id: str | None = None,
-    thread_id: str | None = None,
-    capture_logs: bool = False,
-) -> dict[str, Any]:
-    del self, capture_logs
-    if "provider failure" in message.lower():
+def _fixture_post(self, path, data):
+    """Fixture only the transport; the installed SDK constructs every request."""
+    messages = data.get("messages", [])
+    prompt = (
+        messages[-1].get("content", "")
+        if messages
+        else data.get("message", {}).get("content", "")
+    )
+    if isinstance(prompt, list):
+        prompt = " ".join(
+            part.get("text", "") for part in prompt if isinstance(part, dict)
+        )
+    if "provider failure" in prompt.lower():
         raise DeterministicWatsonError("deterministic provider rate limit")
-    return {
-        "run_id": "watson-run-deterministic",
-        "thread_id": thread_id or "watson-thread-deterministic",
-        "agent_id": agent_id or "watson-agent-deterministic",
-        "status": "queued",
-        "message": message,
+    if "/flows/" in path:
+        return {"run_id": "fixture-flow", "status": "queued", "input": data}
+    if "/runs" in path:
+        return {
+            "run_id": "watson-run-deterministic",
+            "thread_id": data.get("thread_id", "watson-thread-deterministic"),
+            "status": "queued",
+            "message": data["message"]["content"],
+        }
+    message = {
+        "role": "assistant",
+        "content": "Watson Orchestrate tracing is deterministic.",
     }
-
-
-async def _stream_run_with_websocket(
-    self: Any,
-    agent_id: str,
-    thread_id: str,
-    run_id: str,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    del self, kwargs
+    if "tool only" in prompt.lower():
+        message = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call-fixture-lookup",
+                    "type": "function",
+                    "function": {
+                        "name": "lookup_ticket",
+                        "arguments": '{"ticket_id":"INC-1001"}',
+                    },
+                }
+            ],
+        }
     return {
-        "agent_id": agent_id,
-        "thread_id": thread_id,
-        "run_id": run_id,
-        "status": "completed",
-    }
-
-
-def _generate_response(
-    self: Any,
-    input: str,
-    model: str | None = None,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    del self, kwargs
-    if "provider failure" in input.lower():
-        raise DeterministicWatsonError("deterministic provider rate limit")
-    return {
-        "model": model or DEFAULT_MODEL,
+        "model": data.get("model", data.get("model_id", DEFAULT_MODEL)),
         "choices": [
             {
-                "message": {
-                    "role": "assistant",
-                    "content": "Watson Orchestrate tracing is deterministic.",
-                }
+                "message": message,
+                "finish_reason": "tool_calls" if "tool_calls" in message else "stop",
             }
         ],
         "usage": {
-            "prompt_tokens": 10,
-            "completion_tokens": 6,
-            "total_tokens": 16,
+            "prompt_tokens": 0 if "zero usage" in prompt else 10,
+            "completion_tokens": 0 if "zero usage" in prompt else 6,
+            "total_tokens": 0 if "zero usage" in prompt else 16,
         },
     }
 
 
+def _fixture_get(self, path):
+    return {
+        "run_id": path.rsplit("/", 1)[-1],
+        "status": "failed" if "failed" in path else "completed",
+        "error": "controlled run failure" if "failed" in path else None,
+    }
+
+
+def _fixture_nd_json(self, path, data):
+    if "/agent/architect/" in path:
+        return [
+            {
+                "event": "message.created",
+                "data": {
+                    "thread_id": "architect-thread",
+                    "message": {
+                        "role": "assistant",
+                        "content": "Architect fixture response.",
+                        "additional_properties": {"architect_conversational_state": {}},
+                    },
+                },
+            }
+        ]
+    return [
+        {"formatted_message": {"role": "assistant", "content": "CPE fixture response."}}
+    ]
+
+
+class _FixtureSocket:
+    def __init__(self, **kwargs):
+        self.handlers = {}
+        self.failed = False
+
+    def register_handler(self, name, callback):
+        self.handlers[name] = callback
+
+    async def connect(self, agent_id, thread_id, run_id):
+        self.failed = "failed" in run_id
+
+    async def listen(self):
+        self.handlers["message.created"](
+            {"event": "message.created", "data": {"message": "fixture message"}}
+        )
+        event = "run.failed" if self.failed else "run.completed"
+        self.handlers[event](
+            {
+                "event": event,
+                "data": {
+                    "run_id": "watson-run-deterministic",
+                    "status": "failed" if self.failed else "completed",
+                    "error": "controlled failure" if self.failed else None,
+                },
+            }
+        )
+
+    async def disconnect(self):
+        pass
+
+
 @contextmanager
 def deterministic_watson_runtime() -> Iterator[None]:
-    originals = {
-        (RunClient, "create_run"): RunClient.create_run,
-        (RunClient, "stream_run_with_websocket"): RunClient.stream_run_with_websocket,
-        (WatsonxAIClient, "generate_response"): WatsonxAIClient.generate_response,
-    }
-    RunClient.create_run = _create_run
-    RunClient.stream_run_with_websocket = _stream_run_with_websocket
-    WatsonxAIClient.generate_response = _generate_response
-    try:
+    from ibm_watsonx_orchestrate.client.autodiscover.ai_gateway.ai_gateway_client import (
+        AIGatewayClient,
+    )
+    from ibm_watsonx_orchestrate.client.autodiscover.groq.groq_client import GroqClient
+    from ibm_watsonx_orchestrate_clients.ai_builder.agent_builder_client import (
+        AgentBuilderClient,
+    )
+    from ibm_watsonx_orchestrate_clients.ai_builder.cpe.cpe_client import CPEClient
+    from ibm_watsonx_orchestrate_clients.chat import run_client
+    from ibm_watsonx_orchestrate_clients.tools.tempus_client import TempusClient
+
+    with ExitStack() as stack:
+        for cls in (
+            RunClient,
+            WatsonxAIClient,
+            GroqClient,
+            AIGatewayClient,
+            TempusClient,
+        ):
+            stack.enter_context(patch.object(cls, "_post", _fixture_post))
+        stack.enter_context(patch.object(RunClient, "_get", _fixture_get))
+        for cls in (AgentBuilderClient, CPEClient):
+            stack.enter_context(patch.object(cls, "_post_nd_json", _fixture_nd_json))
+        stack.enter_context(patch.object(run_client, "WebSocketClient", _FixtureSocket))
         yield
-    finally:
-        for (cls, method_name), original in originals.items():
-            current = getattr(cls, method_name)
-            if current in {
-                _create_run,
-                _stream_run_with_websocket,
-                _generate_response,
-            }:
-                setattr(cls, method_name, original)
 
 
 def deterministic_run_client() -> RunClient:
-    return object.__new__(RunClient)
+    client = object.__new__(RunClient)
+    client.base_endpoint = "/runs"
+    client.base_url = "https://watson.invalid/v1"
+    client.api_key = "fixture-key"
+    client.authenticator = None
+    client.verify = True
+    return client
 
 
-def deterministic_chat_client() -> WatsonxAIClient:
-    client = object.__new__(WatsonxAIClient)
-    object.__setattr__(client, "model", DEFAULT_MODEL)
+def deterministic_chat_client(kind="watsonx") -> WatsonxAIClient:
+    from ibm_watsonx_orchestrate.client.autodiscover.ai_gateway.ai_gateway_client import (
+        AIGatewayClient,
+    )
+    from ibm_watsonx_orchestrate.client.autodiscover.groq.groq_client import GroqClient
+
+    cls = {"watsonx": WatsonxAIClient, "groq": GroqClient, "gateway": AIGatewayClient}[
+        kind
+    ]
+    client = object.__new__(cls)
+    client.model = DEFAULT_MODEL if kind == "watsonx" else "fixture-model"
+    client.space_id = "fixture-space"
     return client

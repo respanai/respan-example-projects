@@ -1,0 +1,5 @@
+google-adk>=2.11.0
+openinference-instrumentation-google-adk>=1.0.2
+respan-ai>=4.2.3
+respan-instrumentation-google-adk>=0.1.0
+python-dotenv>=1.0

@@ -17,7 +17,7 @@ def test_shell_marker_survives_dotenv(monkeypatch) -> None:
 
 def test_runner_covers_all_examples() -> None:
     assert SCRIPTS == tuple(sorted(EXAMPLE_DIR.glob("[0-9][0-9]_*.py")))
-    assert len(SCRIPTS) == 7
+    assert len(SCRIPTS) == 9
 
 
 def test_workflow_roots_take_semantic_arguments() -> None:

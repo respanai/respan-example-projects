@@ -1,4 +1,4 @@
-"""Semantic Kernel chat completion through the Respan gateway."""
+"""Semantic Kernel chat completion with a fixture transport (or an opt-in gateway call)."""
 
 import asyncio
 from pathlib import Path

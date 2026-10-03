@@ -3,10 +3,14 @@
 import asyncio
 from pathlib import Path
 
+from _shared import (
+    create_gateway_model,
+    create_respan,
+    example_attributes,
+    run_agent_once,
+)
 from google.adk.agents import Agent
 from respan import workflow
-
-from _shared import create_gateway_model, create_respan, example_attributes, run_agent_once
 
 SCRIPT_NAME = Path(__file__).name
 APP_NAME = SCRIPT_NAME.removesuffix(".py")

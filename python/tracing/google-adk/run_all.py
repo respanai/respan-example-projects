@@ -8,7 +8,9 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-SCRIPTS = ("01_hello_world.py", "02_tool_use.py", "03_respan_attributes.py")
+SCRIPTS = tuple(
+    path.name for path in sorted(Path(__file__).parent.glob("[0-9][0-9]_*.py"))
+)
 
 
 def main() -> None:
@@ -18,7 +20,9 @@ def main() -> None:
     env.setdefault("RESPAN_ADK_MODEL_MODE", "local")
     print(f"RESPAN_EXAMPLE_RUN_ID={env['RESPAN_EXAMPLE_RUN_ID']}", flush=True)
     for script in SCRIPTS:
-        subprocess.run([sys.executable, str(directory / script)], env=env, check=True)
+        subprocess.run(
+            [sys.executable, str(directory / script)], env=env, check=True, timeout=120
+        )
 
 
 if __name__ == "__main__":

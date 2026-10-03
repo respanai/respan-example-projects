@@ -1,5 +1,7 @@
-respan-ai
+respan-ai>=4.2.3
+respan-tracing>=2.20.1,<3.0.0
 respan-instrumentation-semantic-kernel
-semantic-kernel>=1.36.0
+semantic-kernel>=1.44.1,<2.0.0
 python-dotenv>=1.0.1
-openai>=1.0.0
+openai>=3.24.0,<4
+httpx2>=2.13.1,<3
