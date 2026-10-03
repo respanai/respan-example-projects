@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
-import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from dotenv import load_dotenv
 from respan import Respan
 from respan_instrumentation_crewai import CrewAIInstrumentor
+
+# Disable CrewAI's independent product telemetry; Respan still owns this run's export.
+os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
+os.environ.setdefault("CREWAI_DISABLE_TRACKING", "true")
+os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
+_STORAGE = TemporaryDirectory(prefix="respan-crewai-examples-")
+os.environ.setdefault("CREWAI_STORAGE_DIR", _STORAGE.name)
 
 DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
 DEFAULT_RUN_ID = datetime.now(timezone.utc).strftime("crewai-%Y%m%d-%H%M%S")
@@ -104,6 +111,7 @@ def create_respan(
         "example_set": "crewai",
         "example_name": example_name,
         "example_run_id": run_id,
+        "run_id": run_id,
         "workflow_name": workflow_name,
     }
     metadata.update(kwargs.pop("metadata", {}))
@@ -152,92 +160,10 @@ def build_llm(settings: GatewaySettings):
 
 
 def _build_deterministic_llm(settings: GatewaySettings):
-    """Use real CrewAI lifecycle events without requiring a provider credential."""
-    from crewai.events.types.llm_events import LLMCallType
-    from crewai.llms.base_llm import BaseLLM, llm_call_context
+    """Run CrewAI's native OpenAI connector against local HTTP fixtures."""
+    from _fixtures import FixtureServer
 
-    class DeterministicCrewAILLM(BaseLLM):
-        tool_round_complete: bool = False
-
-        def supports_function_calling(self) -> bool:
-            return True
-
-        def call(
-            self,
-            messages,
-            tools=None,
-            callbacks=None,
-            available_functions=None,
-            from_task=None,
-            from_agent=None,
-            response_model=None,
-        ):
-            _ = callbacks, response_model
-            with llm_call_context():
-                self._emit_call_started_event(
-                    messages=messages,
-                    tools=tools,
-                    available_functions=available_functions,
-                    from_task=from_task,
-                    from_agent=from_agent,
-                )
-                if tools and not self.tool_round_complete:
-                    tool_calls = []
-                    for index, tool in enumerate(tools):
-                        function = tool.get("function", {})
-                        name = function.get("name", f"tool_{index + 1}")
-                        arguments = {"city": "Paris"}
-                        call_id = f"crewai-example-call-{index + 1}"
-                        tool_calls.append(
-                            {
-                                "id": call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": name,
-                                    "arguments": json.dumps(arguments),
-                                },
-                            }
-                        )
-
-                    self._emit_call_completed_event(
-                        response=tool_calls,
-                        call_type=LLMCallType.TOOL_CALL,
-                        from_task=from_task,
-                        from_agent=from_agent,
-                        messages=messages,
-                        usage={"prompt_tokens": 23, "completion_tokens": 7},
-                        finish_reason="tool_calls",
-                        response_id="crewai-example-tool-response",
-                    )
-                    self.tool_round_complete = True
-                    return tool_calls
-
-                if tools:
-                    response = (
-                        "Paris weather is sunny at 22C and its population is "
-                        "about 2.1 million people."
-                    )
-                else:
-                    response = (
-                        "CrewAI coordinates agents and tasks while Respan records "
-                        "their workflow, model, and output spans."
-                    )
-                self._emit_call_completed_event(
-                    response=response,
-                    call_type=LLMCallType.LLM_CALL,
-                    from_task=from_task,
-                    from_agent=from_agent,
-                    messages=messages,
-                    usage={"prompt_tokens": 19, "completion_tokens": 14},
-                    finish_reason="stop",
-                    response_id="crewai-example-text-response",
-                )
-                return response
-
-    return DeterministicCrewAILLM(
-        model=settings.model,
-        provider="openai",
-    )
+    return FixtureServer().llm()
 
 
 def run_with_attributes(context: ExampleContext, fn):
@@ -253,6 +179,7 @@ def run_with_attributes(context: ExampleContext, fn):
             "example_set": "crewai",
             "example_name": context.example_name,
             "example_run_id": context.run_id,
+            "run_id": context.run_id,
             "workflow_name": context.workflow_name,
         },
     ):
@@ -283,9 +210,9 @@ def _first_env(*names: str, default: str | None = None) -> str:
 
 def _load_env_files() -> None:
     for env_path in _env_paths_from(start=Path(__file__).resolve().parent):
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
     for env_path in _env_paths_from(start=Path.cwd()):
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
 
 
 def _env_paths_from(*, start: Path) -> Iterable[Path]:
@@ -305,3 +232,13 @@ def _env_paths_from(*, start: Path) -> Iterable[Path]:
         if env_path.exists() and env_path not in seen:
             seen.add(env_path)
             yield env_path
+
+
+def shutdown_respan(context: ExampleContext) -> None:
+    from crewai.events.event_bus import crewai_event_bus
+
+    try:
+        if not crewai_event_bus.flush():
+            raise RuntimeError("CrewAI event handlers did not finish before shutdown")
+    finally:
+        context.respan.shutdown()

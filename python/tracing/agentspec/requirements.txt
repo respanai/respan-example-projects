@@ -1,4 +1,4 @@
-python-dotenv>=1.0.0
-respan-ai>=4.1.0
-respan-instrumentation-agentspec>=0.1.0
-pyagentspec[langgraph]
+python-dotenv>=1.0.1
+respan-ai>=4.2.3
+respan-instrumentation-agentspec
+pyagentspec[langgraph]>=26.3.1,<27

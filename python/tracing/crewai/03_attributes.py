@@ -6,6 +6,7 @@ from _shared import (
     print_result,
     result_text,
     run_with_attributes,
+    shutdown_respan,
 )
 
 WORKFLOW_NAME = "crewai_03_attributes"
@@ -54,7 +55,7 @@ def main() -> None:
         print_result("Workflow name", WORKFLOW_NAME)
         print_result("Example run id", context.run_id)
     finally:
-        context.respan.shutdown()
+        shutdown_respan(context)
 
 
 if __name__ == "__main__":

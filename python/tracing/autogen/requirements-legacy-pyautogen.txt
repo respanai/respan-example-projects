@@ -1,0 +1,5 @@
+# Python3.11 only; install separately from the autogen extra.
+-r requirements.txt
+pyautogen==0.2.2
+openai==1.109.1
+httpx==0.28.1

@@ -1,65 +1,29 @@
-"""Run an AgentSpec assistant with a server tool and Respan tracing."""
+"""A real AgentSpec tool call with a zero-valued result and follow-up model."""
 
-from pyagentspec.adapters.langgraph import AgentSpecLoader
-from pyagentspec.agent import Agent
-from pyagentspec.llms import OpenAiConfig
-from pyagentspec.property import FloatProperty
-from pyagentspec.serialization import AgentSpecSerializer
-from pyagentspec.tools import ServerTool
+from _fixtures import build_agent, fixture_model
 from _shared import build_respan, example_scope, latest_message_content
 
 
-def subtract(left: float, right: float) -> float:
-    return left - right
-
-
-def run_agent_with_tool() -> str:
-    respan, model = build_respan(
-        example_name="tool-agent",
-        workflow_name="agentspec_tool_agent",
-    )
+def main():
+    respan = build_respan("tool-agent")
     with example_scope("tool-agent"):
         try:
-            subtraction_tool = ServerTool(
-                name="subtract",
-                description="Subtract right from left.",
-                inputs=[FloatProperty(title="left"), FloatProperty(title="right")],
-                outputs=[FloatProperty(title="difference")],
-            )
-            agent = Agent(
-                name="calculator_assistant",
-                description="A calculator assistant with one subtraction tool.",
-                llm_config=OpenAiConfig(
-                    name="respan-gateway",
-                    model_id=model,
-                ),
-                system_prompt=(
-                    "You are a calculator assistant. Use the subtract tool for "
-                    "subtraction requests and return the numeric result."
-                ),
-                tools=[subtraction_tool],
-            )
-            agent_json = AgentSpecSerializer().to_json(agent)
-            langgraph_agent = AgentSpecLoader(
-                tool_registry={"subtract": subtract}
-            ).load_json(agent_json)
-
-            result = langgraph_agent.invoke(
-                input={
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": "Use the subtract tool to compute 987 - 123.",
-                        }
-                    ]
-                }
-            )
-            output = latest_message_content(result)
-            print(output)
-            return output
+            with fixture_model():
+                result = build_agent("Calculator", with_tool=True).invoke(
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "tool-call subtract equal values",
+                            }
+                        ]
+                    }
+                )
+            assert latest_message_content(result) == "0.0"
+            print({"tool_result": latest_message_content(result)})
         finally:
             respan.shutdown()
 
 
 if __name__ == "__main__":
-    run_agent_with_tool()
+    main()

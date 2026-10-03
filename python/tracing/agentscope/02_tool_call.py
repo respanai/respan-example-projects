@@ -3,25 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+from typing import ClassVar
 
+from _shared import (
+    ScriptedChatModel,
+    build_respan,
+    example_scope,
+    text_response,
+    tool_call_response,
+)
 from agentscope.agent import Agent
 from agentscope.message import TextBlock, UserMsg
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk, Toolkit
 
-from _shared import (
-    build_respan,
-    example_scope,
-    text_response,
-    tool_call_response,
-    ScriptedChatModel,
-)
-
 
 class WeatherTool(ToolBase):
     name = "lookup_weather"
     description = "Look up deterministic weather for a city."
-    input_schema = {
+    input_schema: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "city": {"type": "string", "description": "City name"},
@@ -71,6 +71,7 @@ async def main() -> None:
             result = await agent.reply(
                 UserMsg(name="user", content="What is Tokyo weather?")
             )
+            assert result.get_text_content() == "Tokyo is clear and mild."
             print(result.get_text_content())
         finally:
             respan.shutdown()
