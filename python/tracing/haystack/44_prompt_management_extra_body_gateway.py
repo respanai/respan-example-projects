@@ -21,9 +21,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from dotenv import find_dotenv, load_dotenv
-
 from _shared import configure_respan, finish_respan, print_result
+from dotenv import find_dotenv, load_dotenv
 
 
 def _prompt_variables() -> dict[str, Any]:
@@ -109,7 +108,7 @@ def _request_respan_json(
         return {}
     data = json.loads(response_body)
     if not isinstance(data, dict):
-        raise RuntimeError(f"Respan API {method} {path} returned a non-object JSON body.")
+        raise TypeError(f"Respan API {method} {path} returned a non-object JSON body.")
     return data
 
 
@@ -187,7 +186,9 @@ def _managed_prompt_max_tokens() -> int:
     try:
         return int(value)
     except ValueError as exc:
-        raise RuntimeError("RESPAN_MANAGED_PROMPT_MAX_TOKENS must be an integer.") from exc
+        raise RuntimeError(
+            "RESPAN_MANAGED_PROMPT_MAX_TOKENS must be an integer."
+        ) from exc
 
 
 def _create_and_deploy_managed_prompt(

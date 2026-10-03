@@ -1,4 +1,4 @@
-"""Gateway setup for Haystack OpenAIGenerator through Respan."""
+"""Gateway setup for Haystack OpenAIChatGenerator through Respan."""
 
 import os
 
@@ -9,20 +9,21 @@ def run_setup_respan_gateway_example():
     respan = configure_respan("haystack-setup-gateway", use_gateway=True)
     try:
         from haystack import Pipeline
-        from haystack.components.builders import PromptBuilder
-        from haystack.components.generators import OpenAIGenerator
+        from haystack.components.builders import ChatPromptBuilder
+        from haystack.components.generators.chat import OpenAIChatGenerator
+        from haystack.dataclasses import ChatMessage
 
         pipeline = Pipeline()
         pipeline.add_component(
             "prompt_builder",
-            PromptBuilder(
-                "Answer concisely: {{ question }}",
+            ChatPromptBuilder(
+                template=[ChatMessage.from_user("Answer concisely: {{ question }}")],
                 required_variables=["question"],
             ),
         )
         pipeline.add_component(
             "llm",
-            OpenAIGenerator(model=os.getenv("RESPAN_MODEL", "gpt-4o-mini")),
+            OpenAIChatGenerator(model=os.getenv("RESPAN_MODEL", "gpt-4o-mini")),
         )
         pipeline.connect("prompt_builder", "llm")
 

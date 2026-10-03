@@ -2,6 +2,7 @@
 
 from _shared import (
     example_attributes,
+    local_guard,
     make_respan,
     result_summary,
     set_workflow_input,
@@ -25,7 +26,7 @@ def propagated_attributes_workflow(guard: Guard, llm_output: str) -> dict:
 
 def run_propagated_attributes() -> None:
     respan, _ = make_respan("guardrails-propagated-attributes")
-    guard = Guard()
+    guard = local_guard(Guard())
     llm_output = "Guardrails keeps structured outputs reliable."
     try:
         with example_attributes(

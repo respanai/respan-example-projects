@@ -1,8 +1,8 @@
+respan-ai==4.2.3
+respan-tracing==2.20.1
+respan-sdk==2.7.6
+opentelemetry-semantic-conventions-ai==0.5.1
+respan-instrumentation-guardrails
+guardrails-ai==0.11.0
 python-dotenv
-pydantic>=2
--e ../../../../respan/python-sdks/respan-sdk
--e ../../../../respan/python-sdks/respan-tracing
--e ../../../../respan/python-sdks/respan
--e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-guardrails
-guardrails-api==0.3.3
-guardrails-ai @ git+https://github.com/guardrails-ai/guardrails.git@v0.9.3
+pydantic>=2.10.3,<3

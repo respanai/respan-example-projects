@@ -12,6 +12,10 @@ from _shared import (
     set_workflow_input,
     workflow_name,
 )
+from opentelemetry import trace
+from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (
+    GEN_AI_TOOL_CALL_ID,
+)
 from respan import tool, workflow
 
 EXAMPLE_NAME = "tool-calling"
@@ -38,18 +42,10 @@ def _weather_tool_schema() -> dict:
 
 
 @tool(name="get_weather")
-def get_weather(city: str) -> str:
+def get_weather(city: str, tool_call_id: str | None = None) -> str:
+    if tool_call_id:
+        trace.get_current_span().set_attribute(GEN_AI_TOOL_CALL_ID, tool_call_id)
     return f"Sunny and 22 C in {city}"
-
-
-def _tool_calls_content(tool_calls) -> str:
-    descriptions: list[str] = []
-    for tool_call in tool_calls:
-        name = tool_call.function.name
-        arguments = tool_call.function.arguments or "{}"
-        descriptions.append(f"{name}({arguments})")
-    prefix = "Tool call" if len(descriptions) == 1 else "Tool calls"
-    return f"{prefix}: {', '.join(descriptions)}"
 
 
 @workflow(name=workflow_name(EXAMPLE_NAME))
@@ -76,9 +72,6 @@ def _tool_calling_workflow(client) -> str:
         return get_weather(city="Tokyo")
 
     assistant_message = message.model_dump(exclude_none=True)
-    assistant_message["content"] = assistant_message.get(
-        "content"
-    ) or _tool_calls_content(tool_calls)
     messages.append(assistant_message)
     for tool_call in tool_calls:
         arguments = json.loads(tool_call.function.arguments or "{}")
@@ -87,7 +80,9 @@ def _tool_calling_workflow(client) -> str:
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "name": tool_call.function.name,
-                "content": get_weather(city=arguments.get("city", "Tokyo")),
+                "content": get_weather(
+                    city=arguments.get("city", "Tokyo"), tool_call_id=tool_call.id
+                ),
             }
         )
 
@@ -111,6 +106,7 @@ def run_tool_calling() -> None:
             print(f"workflow_name={workflow_name(EXAMPLE_NAME)}", flush=True)
             text = _tool_calling_workflow(client)
     finally:
+        client.close()
         respan.shutdown()
 
     print_result(EXAMPLE_NAME, custom_identifier, text)

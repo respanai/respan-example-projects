@@ -16,9 +16,7 @@ def run_json_schema_validator_example():
         }
         validator = JsonSchemaValidator(schema)
         result = {
-            "valid": validator.run(
-                [ChatMessage.from_assistant('{"answer": "Paris"}')]
-            ),
+            "valid": validator.run([ChatMessage.from_assistant('{"answer": "Paris"}')]),
             "invalid": validator.run(
                 [ChatMessage.from_assistant('{"wrong": "Paris"}')]
             ),

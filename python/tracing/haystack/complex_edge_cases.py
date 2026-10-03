@@ -6,6 +6,7 @@ from typing import Any
 
 from _shared import (
     configure_respan,
+    create_tool_runner,
     finish_respan,
     print_result,
     sample_document_store,
@@ -64,7 +65,6 @@ def run_complex_edge_cases_example():
             FileTypeRouter,
             MetadataRouter,
         )
-        from haystack.components.tools import ToolInvoker
         from haystack.components.validators import JsonSchemaValidator
         from haystack.components.writers import DocumentWriter
         from haystack.dataclasses import ChatMessage
@@ -98,7 +98,7 @@ def run_complex_edge_cases_example():
                 def capture(name: str, action: Any) -> None:
                     try:
                         action()
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - collect controlled SDK failures
                         first_line = str(exc).splitlines()[0]
                         report[name] = f"{type(exc).__name__}: {first_line}"
                     else:
@@ -175,8 +175,8 @@ def run_complex_edge_cases_example():
                         parameters={"type": "object", "properties": {}},
                         function=noop,
                     )
-                    ToolInvoker([tool]).run(
-                        [
+                    create_tool_runner([tool]).run(
+                        messages=[
                             ChatMessage.from_assistant(
                                 tool_calls=[
                                     ToolCall(
@@ -197,7 +197,7 @@ def run_complex_edge_cases_example():
                     sampler = TopPSampler(top_p=0.8, min_top_k=1)
                     sampler.run(sample_documents())
                     report["top_p_sampler_optional_dependency"] = "available"
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - collect controlled SDK failures
                     first_line = str(exc).splitlines()[0]
                     report["top_p_sampler_optional_dependency"] = (
                         f"{type(exc).__name__}: {first_line}"
@@ -337,7 +337,9 @@ Answer:
                     extra_meta_fields={"kind"},
                 ),
             )
-            pipeline.add_component("csv_converter", CSVToDocument(conversion_mode="row"))
+            pipeline.add_component(
+                "csv_converter", CSVToDocument(conversion_mode="row")
+            )
             pipeline.add_component(
                 "converted_joiner",
                 DocumentJoiner(join_mode="concatenate"),
@@ -396,11 +398,11 @@ Answer:
                 "regex_extractor",
                 RegexTextExtractor(r"ticket=(\d+)"),
             )
-            pipeline.add_component("tool_use_add_numbers", ToolInvoker([tool]))
+            pipeline.add_component("tool_use_add_numbers", create_tool_runner([tool]))
             pipeline.add_component(
                 "tool_result_adapter",
                 OutputAdapter(
-                    "{{ tool_messages[0].tool_call_result.result }}",
+                    "{{ tool_messages | selectattr('tool_call_result') | map(attribute='tool_call_result.result') | first }}",
                     output_type=str,
                 ),
             )
@@ -419,8 +421,12 @@ Answer:
             )
             pipeline.add_component("edge_case_probe", EdgeCaseProbe())
 
-            pipeline.connect("document_type_router.text/plain", "document_cleaner.documents")
-            pipeline.connect("document_cleaner.documents", "document_splitter.documents")
+            pipeline.connect(
+                "document_type_router.text/plain", "document_cleaner.documents"
+            )
+            pipeline.connect(
+                "document_cleaner.documents", "document_splitter.documents"
+            )
             pipeline.connect("document_splitter.documents", "metadata_router.documents")
             pipeline.connect("metadata_router.programming", "length_router.documents")
             pipeline.connect("length_router.long_documents", "joiner.documents")
@@ -430,12 +436,18 @@ Answer:
             pipeline.connect("filter_retriever.documents", "joiner.documents")
             pipeline.connect("multi_query_retriever.documents", "joiner.documents")
             pipeline.connect("file_type_router.text/plain", "text_converter.sources")
-            pipeline.connect("file_type_router.text/markdown", "markdown_converter.sources")
+            pipeline.connect(
+                "file_type_router.text/markdown", "markdown_converter.sources"
+            )
             pipeline.connect("file_type_router.text/html", "html_converter.sources")
-            pipeline.connect("file_type_router.application/json", "json_converter.sources")
+            pipeline.connect(
+                "file_type_router.application/json", "json_converter.sources"
+            )
             pipeline.connect("file_type_router.text/csv", "csv_converter.sources")
             pipeline.connect("text_converter.documents", "converted_joiner.documents")
-            pipeline.connect("markdown_converter.documents", "converted_joiner.documents")
+            pipeline.connect(
+                "markdown_converter.documents", "converted_joiner.documents"
+            )
             pipeline.connect("html_converter.documents", "converted_joiner.documents")
             pipeline.connect("json_converter.documents", "converted_joiner.documents")
             pipeline.connect("csv_converter.documents", "converted_joiner.documents")
@@ -456,7 +468,11 @@ Answer:
             pipeline.connect("text_cleaner.texts", "list_joiner.values")
             pipeline.connect("audit_joiner.strings", "list_joiner.values")
             pipeline.connect(
-                "tool_use_add_numbers.tool_messages",
+                "tool_use_add_numbers.messages"
+                if hasattr(
+                    pipeline.get_component("tool_use_add_numbers"), "chat_generator"
+                )
+                else "tool_use_add_numbers.tool_messages",
                 "tool_result_adapter.tool_messages",
             )
             pipeline.connect("tool_result_adapter.output", "list_joiner.values")

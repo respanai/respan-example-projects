@@ -1,48 +1,65 @@
 # Haystack Respan Tracing Examples
 
-These examples cover Respan's Haystack instrumentation package:
+These examples target released Haystack 3.3 and OpenInference Haystack 0.1.44.
+They use released Respan core and OpenInference bridge packages. Before the
+paired SDK change is published, install the requirements and edited adapter in
+one resolver operation:
 
 ```bash
 cd python/tracing/haystack
-pip install -r requirements.txt
+python -m pip install -r requirements.txt \
+  -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-haystack
 ```
 
-The requirements file links the local Respan core, OpenInference bridge, and
-Haystack instrumentation packages and constrains Haystack to the supported 2.x
-line.
+The tested runtime uses `respan-ai==4.2.3`, `respan-tracing==2.20.1`,
+`respan-sdk==2.7.6`, `respan-instrumentation-openinference==1.2.5`, and
+OpenTelemetry 1.45.0. The requirements pin AI semantic conventions to the tested
+0.5.1 release. The adapter also supports Haystack 2.18; the two new native mock
+feature scripts require Haystack 3.
 
-Run any numbered unit script directly:
+Run all 43 deterministic scenarios with one exact marker:
 
 ```bash
-python 00_setup_tracing.py
-python 02_pipeline_run.py
-python run_all.py
+RESPAN_EXAMPLE_RUN_ID=haystack-my-run python run_all.py
 ```
 
-Set `RESPAN_EXAMPLE_RUN_ID` to attach one exact marker to every script in a
-complete batch run.
+The default suite uses local data and native mock models. With `RESPAN_API_KEY`
+set, it exports the synthetic fixture traces to Respan; it makes no model
+provider or gateway calls. Without that key, it runs locally. `RESPAN_BASE_URL`
+defaults to `https://api.respan.ai/api`. Optional converter dependencies and
+PyTorch for `TopPSampler` are included in the requirements.
 
-Gateway scripts route OpenAI-compatible Haystack calls through Respan and require `RESPAN_API_KEY`.
-They do not require `OPENAI_API_KEY`: the examples point Haystack's OpenAI-compatible components at the Respan gateway, and keys with credits can use Respan-managed model credentials.
-`43_prompt_management_gateway.py` also requires `RESPAN_PROMPT_ID` for an existing deployed Respan prompt.
-`44_prompt_management_extra_body_gateway.py` creates and deploys a managed prompt with `RESPAN_API_KEY`, then passes the returned `prompt_id` and variables through `generation_kwargs.extra_body.prompt`.
-Set `RESPAN_PROMPT_VARIABLES_JSON` when the managed prompt uses custom variable names.
+Each scenario has one workflow containing its actual component spans. The suite
+includes the complex pipeline and the newest SDK features: agent-owned tools,
+async tools, full embedding vectors, streaming handles, controlled errors and
+content opt-out. `TRACELOOP_TRACE_CONTENT=false` and Respan's scoped content
+policy also disable payload capture. `TraceConfig(hide_inputs=True, hide_outputs=True)` configures
+OpenInference privacy; Haystack's own content-tracing switch is separate.
 
-Run the complex edge case separately:
+Gateway and managed-prompt actions are explicit options:
 
 ```bash
-python complex_edge_cases.py
+# Calls the gateway and an existing deployed prompt; requires RESPAN_PROMPT_ID.
+python run_all.py --live-gateway
+
+# Creates and deploys a managed prompt, then calls it through the gateway.
+python run_all.py --create-prompt
 ```
+
+These options require a Respan key with the corresponding access and credits.
+Set `RESPAN_PROMPT_VARIABLES_JSON` when an existing prompt uses custom variables.
+They are not part of the deterministic instrumentation validation run. Individual
+scripts can also be run directly.
 
 ## Scripts
 
 | Script | Coverage |
 | --- | --- |
 | `00_setup_tracing.py` | Respan tracing setup with an offline Haystack pipeline |
-| `01_setup_respan_gateway.py` | Respan gateway setup for `OpenAIGenerator` |
+| `01_setup_respan_gateway.py` | Respan gateway setup for `OpenAIChatGenerator` |
 | `complex_edge_cases.py` | Complex single-trace pipeline with preprocessing, routing, retrieval, joining, prompt building, generation, answer building, adapting, and handled failure cases |
 | `02_pipeline_run.py` | `Pipeline.run` |
-| `03_async_pipeline_run.py` | `AsyncPipeline.run_async` |
+| `03_async_pipeline_run.py` | `Pipeline.run_async` (or `AsyncPipeline` on Haystack 2) |
 | `04_prompt_builder.py` | `PromptBuilder` |
 | `05_chat_prompt_builder.py` | `ChatPromptBuilder` |
 | `06_answer_builder.py` | `AnswerBuilder` |
@@ -79,8 +96,10 @@ python complex_edge_cases.py
 | `37_markdown_to_document.py` | `MarkdownToDocument` |
 | `38_text_file_to_document.py` | `TextFileToDocument` |
 | `39_html_to_document.py` | `HTMLToDocument` |
-| `40_tool_invoker.py` | `ToolInvoker` |
-| `41_openai_generator_gateway.py` | `OpenAIGenerator` through Respan gateway |
+| `40_tool_invoker.py` | Native `Agent` tool execution (or `ToolInvoker` on Haystack 2) |
+| `41_openai_generator_gateway.py` | `OpenAIChatGenerator` through Respan gateway |
 | `42_openai_chat_generator_gateway.py` | `OpenAIChatGenerator` through Respan gateway |
 | `43_prompt_management_gateway.py` | Respan prompt management through Haystack `OpenAIChatGenerator` and the Respan gateway |
 | `44_prompt_management_extra_body_gateway.py` | Creates and deploys a Respan managed prompt, then passes only `prompt_id` and variables through Haystack `generation_kwargs.extra_body` while the LLM call uses Respan gateway credits |
+| `45_current_sdk_features.py` | Native mock agents, sync/async tools, 128-dimensional embeddings, `Pipeline.stream`, and controlled failure |
+| `46_content_opt_out.py` | Agent/model/embedding content opt-out with reported usage retained |

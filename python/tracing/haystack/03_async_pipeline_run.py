@@ -8,7 +8,10 @@ from _shared import configure_respan, finish_respan, print_result
 def run_async_pipeline_run_example():
     respan = configure_respan("haystack-async-pipeline-run")
     try:
-        from haystack import AsyncPipeline
+        try:
+            from haystack import AsyncPipeline
+        except ImportError:
+            from haystack import Pipeline as AsyncPipeline
         from haystack import component
 
         async def run_pipeline():

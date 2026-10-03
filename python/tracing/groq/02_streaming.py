@@ -27,9 +27,10 @@ def _streaming_workflow(client) -> str:
     )
     chunks: list[str] = []
     for chunk in stream:
-        content = chunk.choices[0].delta.content
+        content = chunk.choices[0].delta.content if chunk.choices else None
         if content:
             chunks.append(content)
+    stream.close()
     return "".join(chunks)
 
 
@@ -45,6 +46,7 @@ def run_streaming() -> None:
             print(f"workflow_name={workflow_name(EXAMPLE_NAME)}", flush=True)
             text = _streaming_workflow(client)
     finally:
+        client.close()
         respan.shutdown()
 
     print_result(EXAMPLE_NAME, custom_identifier, text)

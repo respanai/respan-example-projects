@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
-from groq import Groq
+from groq import AsyncGroq, Groq
 from respan import Respan, propagate_attributes
 from respan_instrumentation_groq import GroqInstrumentor
 
@@ -19,7 +19,7 @@ DEFAULT_DIRECT_GROQ_MODEL = "llama-3.1-8b-instant"
 
 
 def load_root_env() -> None:
-    load_dotenv(PROJECT_ROOT / ".env", override=True)
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
 def require_respan_api_key() -> str:
@@ -42,6 +42,8 @@ def respan_gateway_api_base_url() -> str:
 
 
 def model_name() -> str:
+    if os.getenv("RESPAN_GROQ_FIXTURE") == "1":
+        return "fixture-groq-model"
     configured_model = os.getenv("GROQ_MODEL") or os.getenv("RESPAN_GROQ_MODEL")
     if configured_model:
         return configured_model
@@ -85,6 +87,14 @@ class RespanGroqGatewayTransport(httpx.BaseTransport):
 
 
 def make_client() -> Groq:
+    if os.getenv("RESPAN_GROQ_FIXTURE") == "1":
+        from _fixture import response
+
+        return Groq(
+            api_key="synthetic-groq",
+            max_retries=0,
+            http_client=httpx.Client(transport=httpx.MockTransport(response)),
+        )
     direct_api_key = groq_api_key()
     if direct_api_key:
         return Groq(api_key=direct_api_key)
@@ -131,6 +141,8 @@ def set_workflow_input(prompt: str) -> None:
 
 
 def client_mode() -> str:
+    if os.getenv("RESPAN_GROQ_FIXTURE") == "1":
+        return "synthetic-http-fixture"
     return "direct-groq" if groq_api_key() else "respan-gateway"
 
 
@@ -139,3 +151,40 @@ def print_result(example_name: str, custom_identifier: str, text: str) -> None:
     print(f"custom_identifier={custom_identifier}")
     print(f"client_mode={client_mode()}")
     print(text.strip())
+
+
+def make_async_client() -> AsyncGroq:
+    if os.getenv("RESPAN_GROQ_FIXTURE") == "1":
+        from _fixture import response
+
+        return AsyncGroq(
+            api_key="synthetic-groq",
+            max_retries=0,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(response)),
+        )
+    if not groq_api_key():
+        raise RuntimeError(
+            "Async/inference examples need GROQ_API_KEY or RESPAN_GROQ_FIXTURE=1"
+        )
+    return AsyncGroq(api_key=groq_api_key())
+
+
+def run_example(name, function):
+    """Give each script one exact-marker workflow and flush before exit."""
+    import asyncio
+    import inspect
+
+    from respan import workflow
+
+    respan = make_respan(name)
+    try:
+        with example_attributes(name):
+            wrapped = workflow(name=workflow_name(name))(function)
+            result = (
+                asyncio.run(wrapped())
+                if inspect.iscoroutinefunction(function)
+                else wrapped()
+            )
+            print(f"example={name} client_mode={client_mode()} result={result}")
+    finally:
+        respan.shutdown()
