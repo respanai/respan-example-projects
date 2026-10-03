@@ -103,6 +103,8 @@ def test_runner_contains_complete_committed_set():
         "01_upsert_and_query.py",
         "02_async_fetch.py",
         "03_expected_error.py",
+        "04_documents.py",
+        "05_async_listings.py",
     )
     for script in run_all.SCRIPTS:
         assert (EXAMPLE_DIR / script).is_file()

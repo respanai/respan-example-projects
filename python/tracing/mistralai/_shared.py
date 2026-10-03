@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
+import httpx2 as httpx
 from dotenv import load_dotenv
 from mistralai.client import Mistral
 from respan import Respan, propagate_attributes
@@ -73,6 +73,21 @@ def mistral_api_key() -> str | None:
 
 
 def make_client() -> Mistral:
+    if os.getenv("MISTRAL_USE_MOCKS", "").lower() in {"1", "true", "yes"}:
+
+        def handler(request):
+            return deterministic_chat_response(
+                request,
+                content="Mistral SDK 3 fixture response.",
+                prompt_tokens=8,
+                completion_tokens=5,
+            )
+
+        return Mistral(
+            api_key="deterministic-example-key",
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+            async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
     direct_api_key = mistral_api_key()
     if direct_api_key:
         return Mistral(api_key=direct_api_key)
@@ -224,6 +239,8 @@ def example_attributes(
 
 
 def client_mode() -> str:
+    if os.getenv("MISTRAL_USE_MOCKS", "").lower() in {"1", "true", "yes"}:
+        return "deterministic-current-sdk"
     return "direct-mistral" if mistral_api_key() else "respan-gateway"
 
 

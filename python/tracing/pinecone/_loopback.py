@@ -37,6 +37,38 @@ class _Handler(BaseHTTPRequestHandler):
         return value if isinstance(value, dict) else {}
 
     def do_GET(self) -> None:
+        if self.path.startswith("/indexes"):
+            self._reply(200, {"indexes": []})
+            return
+        if self.path.startswith("/vectors/list"):
+            result = {
+                "vectors": [
+                    {"id": "doc-2" if "paginationToken" in self.path else "doc-1"}
+                ],
+                "namespace": "demo",
+            }
+            if "paginationToken" not in self.path:
+                result["pagination"] = {"next": "next-page"}
+            self._reply(200, result)
+            return
+        if self.path.startswith("/namespaces"):
+            self._reply(200, {"namespaces": [{"name": "demo", "recordCount": 1}]})
+            return
+        if self.path.startswith("/bulk/imports"):
+            self._reply(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "import-1",
+                            "uri": "s3://fixture",
+                            "status": "Completed",
+                            "createdAt": "2026-10-03T00:00:00Z",
+                        }
+                    ]
+                },
+            )
+            return
         if self.path.startswith("/vectors/fetch"):
             query = parse_qs(urlsplit(self.path).query)
             vector_id = (query.get("ids") or ["trace-doc"])[0]
@@ -59,7 +91,51 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         body = self._body()
-        if self.path == "/describe_index_stats":
+        if self.path.endswith("/documents/upsert"):
+            self._reply(200, {"upserted_count": len(body["documents"])})
+        elif self.path.endswith("/documents/search"):
+            self._reply(
+                200,
+                {
+                    "namespace": "demo",
+                    "matches": [{"_id": "doc-1", "_score": 0.99, "title": "tracing"}],
+                    "usage": {"read_units": 1},
+                },
+            )
+        elif self.path.endswith("/documents/fetch"):
+            self._reply(
+                200,
+                {
+                    "namespace": "demo",
+                    "documents": {"doc-1": {"_id": "doc-1", "title": "tracing"}},
+                    "usage": {"read_units": 1},
+                },
+            )
+        elif self.path.endswith("/documents/update") or self.path.endswith(
+            "/documents/delete"
+        ):
+            self._reply(200, {"matched_records": 1})
+        elif self.path.endswith("/documents/list"):
+            if body.get("pagination_token"):
+                self._reply(
+                    200,
+                    {
+                        "namespace": "demo",
+                        "documents": [{"_id": "doc-2"}],
+                        "usage": {"read_units": 1},
+                    },
+                )
+            else:
+                self._reply(
+                    200,
+                    {
+                        "namespace": "demo",
+                        "documents": [{"_id": "doc-1"}],
+                        "usage": {"read_units": 1},
+                        "pagination": {"next": "page-2"},
+                    },
+                )
+        elif self.path == "/describe_index_stats":
             self._reply(
                 200,
                 {

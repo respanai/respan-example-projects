@@ -9,6 +9,8 @@ EXAMPLES = [
     "01_chat.py",
     "02_streaming_chat.py",
     "03_embed_rerank.py",
+    "04_async_tools_and_error.py",
+    "05_async_streaming.py",
 ]
 
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 
-from respan import workflow
-
 from _shared import (
     example_attributes,
     make_client,
@@ -13,6 +11,7 @@ from _shared import (
     print_result,
     workflow_name,
 )
+from respan import workflow
 
 EXAMPLE_NAME = "async-generate-content"
 

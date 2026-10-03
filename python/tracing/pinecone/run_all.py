@@ -11,6 +11,8 @@ SCRIPTS = (
     "01_upsert_and_query.py",
     "02_async_fetch.py",
     "03_expected_error.py",
+    "04_documents.py",
+    "05_async_listings.py",
 )
 DEFAULT_TIMEOUT_SECONDS = 90.0
 

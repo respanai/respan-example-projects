@@ -1,4 +1,4 @@
-pinecone>=9.1.0,<10.0.0
+pinecone>=10.0.0,<11.0.0
 python-dotenv>=1.0.0
 respan-ai>=4.1.0
 respan-instrumentation-pinecone>=0.1.0
