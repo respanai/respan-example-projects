@@ -7,6 +7,7 @@ from _shared import (
     with_session,
     workflow_attributes,
 )
+from opentelemetry import trace
 from respan import Respan, workflow
 
 WORKFLOW_NAME = "mcp_tool_call_workflow"
@@ -20,7 +21,11 @@ async def run_tool_call_example() -> dict[str, object]:
             "summarize_city",
             arguments={"city": "Paris"},
         )
+        server_context = await session.call_tool("current_trace_id")
+        expected_trace = f"{trace.get_current_span().get_span_context().trace_id:032x}"
+        assert server_context.content[0].text == expected_trace
         output = {
+            "context_propagated": True,
             "available_tools": [tool.name for tool in tools.tools],
             "called_tool": "summarize_city",
             "result": result.content[0].text,

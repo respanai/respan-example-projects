@@ -30,8 +30,9 @@ def load_gateway_settings() -> GatewaySettings:
     _load_env_files()
     api_key = os.environ["RESPAN_API_KEY"]
     base_url = os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api")
-    os.environ["OPENAI_API_KEY"] = api_key
-    os.environ["OPENAI_BASE_URL"] = base_url
+    if not use_fixtures():
+        os.environ["OPENAI_API_KEY"] = api_key
+        os.environ["OPENAI_BASE_URL"] = base_url
     return GatewaySettings(
         api_key=api_key,
         base_url=base_url,
@@ -83,13 +84,25 @@ def build_agent(
     instructions: str | list[str] | None = None,
     tools: list | None = None,
 ) -> Agent:
-    settings = load_gateway_settings()
     return Agent(
         name=name,
-        model=OpenAIChat(id=settings.model),
+        model=build_model(),
         instructions=instructions,
         tools=tools,
+        telemetry=False,
     )
+
+
+def use_fixtures() -> bool:
+    return os.getenv("AGNO_USE_FIXTURES", "").lower() in {"1", "true", "yes"}
+
+
+def build_model(model_class=OpenAIChat):
+    if use_fixtures():
+        from _fixture_model import model
+
+        return model(model_class=model_class)
+    return model_class(id=load_gateway_settings().model)
 
 
 def print_result(label: str, value: object) -> None:
@@ -98,9 +111,9 @@ def print_result(label: str, value: object) -> None:
 
 def _load_env_files() -> None:
     for env_path in _env_paths_from(start=Path(__file__).resolve().parent):
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
     for env_path in _env_paths_from(start=Path.cwd()):
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
 
 
 def _env_paths_from(*, start: Path) -> Iterable[Path]:

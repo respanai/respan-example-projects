@@ -87,6 +87,7 @@ def make_respan(
     *,
     include_content: bool = True,
     include_binary_content: bool = True,
+    version: int = 5,
 ) -> Respan:
     marker = example_run_id()
     return Respan(
@@ -97,6 +98,7 @@ def make_respan(
             PydanticAIInstrumentor(
                 include_content=include_content,
                 include_binary_content=include_binary_content,
+                version=version,
             )
         ],
         metadata={

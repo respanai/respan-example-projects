@@ -4,19 +4,20 @@ These examples demonstrate how to integrate `pydantic-ai` v2 with Respan tracing
 
 ## Setup
 
-1. Install the required dependencies:
+1. Install the paired local instrumentation update and current SDK requirements in
+one resolver operation. Keep the Respan core packages on their released versions:
 
 ```bash
 cd python/tracing/pydantic-ai
-pip install -r requirements.txt
+python -m pip install -r requirements.txt \
+  -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-pydantic-ai
 ```
 
-> **Note:** `respan-ai` and `respan-instrumentation-pydantic-ai` must be published to PyPI first. For local development, install from source instead:
-> ```bash
-> pip install -e /path/to/respan/python-sdks/respan \
->             -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-pydantic-ai \
->             'pydantic-ai>=2.0.0' python-dotenv
-> ```
+Use this editable adapter until the companion SDK change is published. The
+requirements pin AI semantic conventions 0.5.1, which resolves the current
+PydanticAI 2.54 / Respan facade dependency set. The full PydanticAI distribution
+installs Logfire 5.1.1 and requires OpenTelemetry SDK below 1.45; use a separate
+environment from integrations that require 1.45 or later.
 
 2. Use the repository root `.env` values:
 
@@ -41,6 +42,9 @@ The examples use Pydantic AI's real deterministic `TestModel` runtime by default
 | `04_respan_params.py` | Setting `customer_identifier`, `metadata`, and `custom_tags` on spans |
 | `05_tool_use.py` | Tracing a Pydantic AI agent that uses tools |
 | `06_anthropic.py` | Running Anthropic models through the Respan gateway |
+| `07_embeddings.py` | Native sync query, async document embeddings, full 128-dimension vectors, controlled failure |
+| `08_structured_and_streaming.py` | Structured output, async stream completion and failure, current version 6 telemetry |
+| `09_content_opt_out.py` | Agent and embedding content disabled while retaining model/usage |
 
 Run any example:
 
@@ -57,8 +61,8 @@ RESPAN_EXAMPLE_RUN_ID=otel2-pydantic-ai-check python run_all.py
 ## How it works
 
 1. `Respan(...)` initializes the OpenTelemetry pipeline for Respan.
-2. `PydanticAIInstrumentor()` enables Pydantic AI's native OpenTelemetry spans and normalizes them for Respan.
-3. Examples construct `OpenAIChatModel` with `OpenAIProvider(base_url=RESPAN_GATEWAY_BASE_URL, api_key=RESPAN_GATEWAY_API_KEY)`.
+2. `PydanticAIInstrumentor()` enables native `Agent` and `Embedder` OpenTelemetry spans and normalizes them for Respan.
+3. The default models run locally. The first six scenarios can opt into `OpenAIChatModel` with the configured Gateway provider; the three feature scenarios always use deterministic native SDK models.
 4. Traces, spans, and metrics from LLM calls, tools, and workflows are sent to Respan and visible in the dashboard.
 
 ## Further reading
@@ -67,3 +71,11 @@ RESPAN_EXAMPLE_RUN_ID=otel2-pydantic-ai-check python run_all.py
 - [respan-instrumentation-pydantic-ai](https://pypi.org/project/respan-instrumentation-pydantic-ai/)
 - [Respan Documentation](https://docs.respan.ai)
 - [Pydantic AI](https://ai.pydantic.dev/)
+
+The runner executes nine scripts with one `RESPAN_EXAMPLE_RUN_ID`; every span
+carries exact `run_id` and `example_run_id` metadata. Local model calls do not
+contact a provider, but the examples export synthetic traces to Respan. Verify
+trees and full log records with that exact marker before treating the run as
+semantic acceptance. Native PydanticAI 2.54 leaves the failed streaming model
+span unset while recording the error on its agent span; that SDK behavior is
+preserved.

@@ -1,8 +1,7 @@
 """Trace an Agno agent that calls a Python tool."""
 
-from respan import workflow
-
 from _shared import build_agent, create_respan, example_attributes, print_result
+from respan import workflow
 
 
 def lookup_shipping_status(order_id: str) -> str:

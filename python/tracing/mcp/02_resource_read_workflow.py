@@ -16,6 +16,8 @@ WORKFLOW_NAME = "mcp_resource_read_workflow"
 async def run_resource_read_example() -> dict[str, object]:
     async with with_session() as session:
         resources = await session.list_resources()
+        templates = await session.list_resource_templates()
+        assert templates.resource_templates
         result = await session.read_resource("profile://city/paris")
         output = {
             "available_resources": [

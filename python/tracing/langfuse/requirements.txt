@@ -1,4 +1,4 @@
-langfuse>=3.12.0
+langfuse>=4.16.0,<5.0.0
 respan-ai
 respan-instrumentation-langfuse
 python-dotenv>=1.0.0

@@ -1,4 +1,4 @@
 python-dotenv
-mcp>=1.27.0,<2.0.0
+mcp>=2.3.0,<3.0.0
 respan-ai
 respan-instrumentation-mcp

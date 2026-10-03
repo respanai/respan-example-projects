@@ -1,8 +1,7 @@
 """Workflow and task spans around an Agno agent run."""
 
-from respan import task, workflow
-
 from _shared import build_agent, create_respan, example_attributes, print_result
+from respan import task, workflow
 
 
 @task(name="draft_prompt")

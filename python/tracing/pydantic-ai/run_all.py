@@ -13,6 +13,9 @@ EXAMPLES = (
     "04_respan_params.py",
     "05_tool_use.py",
     "06_anthropic.py",
+    "07_embeddings.py",
+    "08_structured_and_streaming.py",
+    "09_content_opt_out.py",
 )
 
 

@@ -1,5 +1,6 @@
-agno>=2.6.5
-openai>=2.8.0
+agno>=2.6.5,<4
+openai>=3.0.0,<4
 python-dotenv>=1.0.0
 respan-ai
 respan-instrumentation-agno
+httpx>=0.28,<1

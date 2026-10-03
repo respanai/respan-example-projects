@@ -1,8 +1,7 @@
 """Route Agno model calls through the Respan gateway."""
 
-from respan import workflow
-
 from _shared import build_agent, create_respan, example_attributes, print_result
+from respan import workflow
 
 
 @workflow(name="agno_02_gateway")

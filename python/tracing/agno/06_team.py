@@ -1,16 +1,15 @@
 """Trace an Agno team run."""
 
+from _shared import (
+    build_agent,
+    build_model,
+    create_respan,
+    example_attributes,
+    print_result,
+)
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from respan import workflow
-
-from _shared import (
-    build_agent,
-    create_respan,
-    example_attributes,
-    load_gateway_settings,
-    print_result,
-)
 
 
 class DelegatingOpenAIChat(OpenAIChat):
@@ -36,7 +35,6 @@ class DelegatingOpenAIChat(OpenAIChat):
 
 @workflow(name="agno_06_team")
 def run_team() -> str:
-    settings = load_gateway_settings()
     researcher = build_agent(
         name="Researcher",
         instructions="Find the most relevant operational facts.",
@@ -47,8 +45,9 @@ def run_team() -> str:
     )
     team_agent = Team(
         name="Tracing Team",
-        model=DelegatingOpenAIChat(id=settings.model),
+        model=build_model(DelegatingOpenAIChat),
         members=[researcher, writer],
+        telemetry=False,
         delegate_to_all_members=True,
         instructions=(
             "Delegate this task to every member. The Researcher supplies facts, "

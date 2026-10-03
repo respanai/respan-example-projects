@@ -1,8 +1,7 @@
 """Attach customer, thread, and metadata params to Agno spans."""
 
-from respan import workflow
-
 from _shared import build_agent, create_respan, example_attributes, print_result
+from respan import workflow
 
 
 @workflow(name="agno_04_respan_params")
@@ -24,12 +23,14 @@ def respan_params() -> None:
     )
 
     try:
-        with example_attributes(respan, "agno_04_respan_params"):
-            with respan.propagate_attributes(
+        with (
+            example_attributes(respan, "agno_04_respan_params"),
+            respan.propagate_attributes(
                 custom_identifier="agno-run-001",
                 metadata={"request_type": "demo"},
-            ):
-                output = run_params_agent()
+            ),
+        ):
+            output = run_params_agent()
     finally:
         respan.shutdown()
 
