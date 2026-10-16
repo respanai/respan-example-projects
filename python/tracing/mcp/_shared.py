@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp.client import stdio
 from respan import Respan
 from respan_instrumentation_mcp import MCPInstrumentor
 
@@ -47,11 +47,12 @@ def workflow_attributes(workflow_name: str) -> dict[str, object]:
     invocation_id = uuid4().hex[:8]
     return {
         "trace_group_identifier": workflow_name,
-        "custom_identifier": f"{workflow_name}-{invocation_id}",
+        "custom_identifier": f"{run_id}:{workflow_name}",
         "metadata": {
             "example_set": EXAMPLE_SET,
             "workflow_name": workflow_name,
             "example_run_id": run_id,
+            "run_id": run_id,
             "example_invocation_id": invocation_id,
         },
     }
@@ -65,7 +66,7 @@ async def with_session(*, server_args: tuple[str, ...] = ()):
         cwd=str(EXAMPLE_DIR),
     )
     async with (
-        stdio_client(server_params) as (read, write),
+        stdio.stdio_client(server_params) as (read, write),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
