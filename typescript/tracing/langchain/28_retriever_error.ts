@@ -15,7 +15,10 @@ export async function retrieverError(): Promise<void> {
   const retriever = new FailingRetriever();
 
   try {
-    await retriever.invoke("missing", tracingConfig(runtime, "retriever_error"));
+    await retriever.invoke(
+      "missing",
+      tracingConfig(runtime, "retriever_error"),
+    );
   } catch (error) {
     console.log(`caught expected error: ${(error as Error).message}`);
   } finally {

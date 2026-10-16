@@ -7,18 +7,27 @@
     "01:client-tool": "tsx 01_client_tool_call.ts",
     "02:resources-prompts": "tsx 02_resources_and_prompts.ts",
     "03:legacy-tool-api": "tsx 03_legacy_tool_api.ts",
-    "all": "tsx 01_client_tool_call.ts && tsx 02_resources_and_prompts.ts && tsx 03_legacy_tool_api.ts"
+    "all": "npm run 01:client-tool && npm run 02:resources-prompts && npm run 03:legacy-tool-api && npm run 04:protocol && npm run 05:v2 && npm run 06:tasks && npm run 07:fidelity && npm run 08:privacy",
+    "04:protocol": "tsx 04_protocol_callbacks.ts",
+    "05:v2": "tsx 05_split_v2.ts",
+    "06:tasks": "tsx 06_experimental_tasks.ts",
+    "07:fidelity": "tsx 07_full_content.ts",
+    "08:privacy": "tsx 08_privacy_and_errors.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@respan/instrumentation-mcp": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-mcp",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^17.2.3",
+    "@respan/respan": "2.5.0",
+    "@respan/respan-sdk": "1.3.4",
+    "@respan/tracing": "1.6.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "zod": "^4.1.12"
+    "zod": "^4.1.12",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@opentelemetry/api": "1.9.0",
+    "@traceloop/ai-semantic-conventions": "0.13.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1"

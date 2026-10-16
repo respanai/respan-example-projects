@@ -1,23 +1,32 @@
-import { AIMessage } from "@langchain/core/messages";
-import { fakeModel } from "@langchain/core/testing";
 import { createAgent } from "langchain";
 
-import { getWeather, initRespan, shutdown, tracingConfig } from "./_shared";
+import {
+  chatModel,
+  getWeather,
+  initRespan,
+  shutdown,
+  tracingConfig,
+} from "./_shared";
 
 export async function agentStreamUpdates(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-agent-stream-updates");
-  const model = fakeModel()
-    .respondWithTools([
-      { id: "call_weather", name: "get_weather", args: { city: "Austin" } },
-    ])
-    .respond(new AIMessage("It is sunny in Austin."));
+  const model = chatModel([
+    {
+      toolCalls: [
+        { id: "call_weather", name: "get_weather", args: { city: "Austin" } },
+      ],
+    },
+    "It is sunny in Austin.",
+  ]);
   const agent = createAgent({ model, tools: [getWeather] });
 
   try {
     const stream = await agent.stream(
       { messages: [{ role: "user", content: "Weather in Austin?" }] },
       {
-        ...tracingConfig(runtime, "agent_stream_updates", { framework: "langgraph" }),
+        ...tracingConfig(runtime, "agent_stream_updates", {
+          framework: "langgraph",
+        }),
         streamMode: "updates",
       },
     );

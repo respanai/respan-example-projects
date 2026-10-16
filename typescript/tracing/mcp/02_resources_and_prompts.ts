@@ -1,43 +1,41 @@
+import assert from "node:assert/strict";
 import {
   createDemoMcpEnvironment,
   createRespan,
-  logExampleResult,
+  finish,
   runWithExampleTrace,
 } from "./_shared.js";
-
-const workflowName = "TypeScript MCP Resources And Prompts Example";
-
-export async function resourcesAndPromptsExample(): Promise<void> {
-  const respan = createRespan("typescript-mcp-resources-prompts-example");
-  await respan.initialize();
-
-  try {
-    const result = await runWithExampleTrace(respan, workflowName, async () => {
-      const env = await createDemoMcpEnvironment();
-      try {
-        const resources = await env.client.listResources();
-        const templates = await env.client.listResourceTemplates();
-        const contents = await env.client.readResource({ uri: "demo://city/paris" });
-        const prompts = await env.client.listPrompts();
-        const prompt = await env.client.getPrompt({
-          name: "city_brief",
-          arguments: { city: "Paris" },
-        });
-        return { resources, templates, contents, prompts, prompt };
-      } finally {
-        await env.close();
-      }
-    });
-
-    logExampleResult(workflowName, {
-      resources: result.resources.resources.map((resource) => resource.uri),
-      templates: result.templates.resourceTemplates.map((template) => template.uriTemplate),
-      promptNames: result.prompts.prompts.map((prompt) => prompt.name),
-      firstPromptMessage: result.prompt.messages[0]?.content,
-      firstResourceText: result.contents.contents[0] && "text" in result.contents.contents[0] ? result.contents.contents[0].text : undefined,
-    });
-  } finally {
-  }
+const name = "TypeScript MCP Resources And Prompts Example";
+const respan = await createRespan("typescript-mcp-resources-prompts");
+await respan.initialize();
+try {
+  await runWithExampleTrace(respan, name, async () => {
+    const env = await createDemoMcpEnvironment();
+    try {
+      assert.equal((await env.client.listResources()).resources.length, 1);
+      assert.equal(
+        (await env.client.listResourceTemplates()).resourceTemplates.length,
+        1,
+      );
+      assert.equal(
+        (await env.client.readResource({ uri: "demo://city/paris" })).contents
+          .length,
+        1,
+      );
+      assert.equal((await env.client.listPrompts()).prompts.length, 1);
+      assert.equal(
+        (
+          await env.client.getPrompt({
+            name: "city_brief",
+            arguments: { city: "Paris" },
+          })
+        ).messages[0].role,
+        "user",
+      );
+    } finally {
+      await env.close();
+    }
+  });
+} finally {
+  await finish(respan, name);
 }
-
-await resourcesAndPromptsExample();

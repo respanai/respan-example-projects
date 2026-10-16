@@ -9,7 +9,9 @@ const State = new StateSchema({
 });
 
 export async function langgraphStreamUpdates(): Promise<void> {
-  const runtime = await initRespan("typescript-langchain-langgraph-stream-updates");
+  const runtime = await initRespan(
+    "typescript-langchain-langgraph-stream-updates",
+  );
   const graph = new StateGraph(State)
     .addNode("refineTopic", (state: typeof State.State) => ({
       topic: `${state.topic} and callbacks`,
@@ -26,7 +28,9 @@ export async function langgraphStreamUpdates(): Promise<void> {
     const stream = await graph.stream(
       { topic: "LangGraph" },
       {
-        ...tracingConfig(runtime, "langgraph_stream_updates", { framework: "langgraph" }),
+        ...tracingConfig(runtime, "langgraph_stream_updates", {
+          framework: "langgraph",
+        }),
         streamMode: "updates",
       },
     );

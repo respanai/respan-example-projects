@@ -1,10 +1,16 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
-import { fakeChat, initRespan, messageText, shutdown, tracingConfig } from "./_shared";
+import {
+  chatModel,
+  initRespan,
+  messageText,
+  shutdown,
+  tracingConfig,
+} from "./_shared";
 
 export async function chatModelInvoke(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-chat-model-invoke");
-  const model = fakeChat(["Bonjour, Respan."]);
+  const model = chatModel(["Bonjour, Respan."]);
 
   try {
     const response = await model.invoke(

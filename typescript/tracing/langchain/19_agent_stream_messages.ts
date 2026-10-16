@@ -1,19 +1,27 @@
-import { AIMessage } from "@langchain/core/messages";
-import { fakeModel } from "@langchain/core/testing";
 import { createAgent } from "langchain";
 
-import { initRespan, messageText, shutdown, tracingConfig } from "./_shared";
+import {
+  chatModel,
+  initRespan,
+  messageText,
+  shutdown,
+  tracingConfig,
+} from "./_shared";
 
 export async function agentStreamMessages(): Promise<void> {
-  const runtime = await initRespan("typescript-langchain-agent-stream-messages");
-  const model = fakeModel().respond(new AIMessage("Streaming message response."));
+  const runtime = await initRespan(
+    "typescript-langchain-agent-stream-messages",
+  );
+  const model = chatModel(["Streaming message response."]);
   const agent = createAgent({ model, tools: [] });
 
   try {
     const stream = await agent.stream(
       { messages: [{ role: "user", content: "Reply briefly." }] },
       {
-        ...tracingConfig(runtime, "agent_stream_messages", { framework: "langgraph" }),
+        ...tracingConfig(runtime, "agent_stream_messages", {
+          framework: "langgraph",
+        }),
         streamMode: "messages",
       },
     );

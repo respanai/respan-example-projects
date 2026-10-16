@@ -1,43 +1,79 @@
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
 import { Document } from "@langchain/core/documents";
 import { BaseRetriever } from "@langchain/core/retrievers";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { FakeLLM, FakeListChatModel } from "@langchain/core/utils/testing";
+import { RespanTelemetry } from "@respan/tracing";
+import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
+import { writeFile } from "node:fs/promises";
+export { chatModel, textModel } from "./_fixture";
 import { LangChainInstrumentor } from "@respan/instrumentation-langchain";
 import { Respan } from "@respan/respan";
-import dotenv from "dotenv";
-import { fileURLToPath } from "node:url";
-import { tool } from "langchain";
-import { z } from "zod";
-
-dotenv.config({
-  path: fileURLToPath(new URL("../../../.env", import.meta.url)),
-  quiet: true,
-});
-
 export interface ExampleRuntime {
   enabled: boolean;
-  instrumentor?: LangChainInstrumentor;
+  instrumentor: LangChainInstrumentor;
   respan?: Respan;
+  telemetry?: RespanTelemetry;
+  spans: ReadableSpan[];
 }
 
 export async function initRespan(appName: string): Promise<ExampleRuntime> {
-  const apiKey = process.env.RESPAN_API_KEY;
-  if (!apiKey) {
-    console.log("RESPAN_API_KEY is not set; running locally without exporting spans.");
-    return { enabled: false };
-  }
-
   const instrumentor = new LangChainInstrumentor();
-  const respan = new Respan({
-    apiKey,
-    baseURL: process.env.RESPAN_BASE_URL,
+  const spans: ReadableSpan[] = [];
+  const exporter: SpanExporter = {
+    export(batch, done) {
+      spans.push(...batch);
+      done({ code: 0 });
+    },
+    shutdown: async () => {},
+  };
+  if (process.env.RESPAN_EXPORT === "1") {
+    const apiKey = process.env.RESPAN_API_KEY;
+    if (!apiKey) throw new Error("RESPAN_EXPORT=1 requires RESPAN_API_KEY.");
+    const respan = new Respan({
+      apiKey,
+      baseURL: process.env.RESPAN_BASE_URL,
+      appName,
+      instrumentations: [instrumentor],
+      logLevel: "error",
+      silenceInitializationMessage: true,
+    });
+    await respan.initialize();
+    respan.addProcessor({
+      name: "example-capture",
+      exporter,
+      filter: () => true,
+      disableBatch: true,
+    });
+    return { enabled: true, instrumentor, respan, spans };
+  }
+  const telemetry = new RespanTelemetry({
     appName,
-    instrumentations: [instrumentor],
+    apiKey: "fixture-local-only",
+    exporter,
+    disableBatch: true,
+    disabledInstrumentations: [
+      "http",
+      "openAI",
+      "anthropic",
+      "azureOpenAI",
+      "cohere",
+      "bedrock",
+      "googleVertexAI",
+      "googleAIPlatform",
+      "pinecone",
+      "together",
+      "langChain",
+      "llamaIndex",
+      "chromaDB",
+      "qdrant",
+    ],
     logLevel: "error",
     silenceInitializationMessage: true,
   });
-  await respan.initialize();
-  return { enabled: true, instrumentor, respan };
+  await telemetry.initialize();
+  instrumentor.activate();
+  return { enabled: true, instrumentor, telemetry, spans };
 }
 
 export function tracingConfig(
@@ -54,19 +90,37 @@ export function tracingConfig(
       ...metadata,
     },
   };
-  return runtime.instrumentor ? runtime.instrumentor.addCallback(config) : config;
+  return runtime.instrumentor
+    ? runtime.instrumentor.addCallback(config)
+    : config;
 }
 
 export async function shutdown(runtime: ExampleRuntime): Promise<void> {
-  await runtime.respan?.shutdown().catch(() => undefined);
-}
-
-export function fakeChat(responses: string[]): FakeListChatModel {
-  return new FakeListChatModel({ responses });
-}
-
-export function fakeLlm(response: string): FakeLLM {
-  return new FakeLLM({ response });
+  runtime.instrumentor.deactivate();
+  if (runtime.respan) await runtime.respan.shutdown();
+  else await runtime.telemetry?.shutdown();
+  if (runtime.spans.length === 0)
+    throw new Error("The native example produced no spans.");
+  if (process.env.RESPAN_CAPTURE_PATH) {
+    await writeFile(
+      process.env.RESPAN_CAPTURE_PATH,
+      JSON.stringify(
+        runtime.spans.map((span) => ({
+          name: span.name,
+          traceId: span.spanContext().traceId,
+          spanId: span.spanContext().spanId,
+          parentId: span.parentSpanContext?.spanId,
+          attributes: span.attributes,
+          status: span.status,
+        })),
+        null,
+        2,
+      ),
+    );
+  }
+  console.log(
+    `Captured ${runtime.spans.length} native callback spans through the Respan pipeline.`,
+  );
 }
 
 export function messageText(value: unknown): string {

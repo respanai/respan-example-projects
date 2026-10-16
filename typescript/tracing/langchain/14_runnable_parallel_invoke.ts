@@ -3,7 +3,9 @@ import { RunnableLambda, RunnableParallel } from "@langchain/core/runnables";
 import { initRespan, shutdown, tracingConfig } from "./_shared";
 
 export async function runnableParallelInvoke(): Promise<void> {
-  const runtime = await initRespan("typescript-langchain-runnable-parallel-invoke");
+  const runtime = await initRespan(
+    "typescript-langchain-runnable-parallel-invoke",
+  );
   const parallel = RunnableParallel.from({
     upper: RunnableLambda.from((text: string) => text.toUpperCase()),
     length: RunnableLambda.from((text: string) => text.length),

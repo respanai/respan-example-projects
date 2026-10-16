@@ -1,9 +1,7 @@
-import { AIMessage } from "@langchain/core/messages";
-import { fakeModel } from "@langchain/core/testing";
 import { createAgent, tool } from "langchain";
 import { z } from "zod";
 
-import { initRespan, shutdown, tracingConfig } from "./_shared";
+import { chatModel, initRespan, shutdown, tracingConfig } from "./_shared";
 
 const getWeatherWithProgress = tool(
   async (
@@ -23,22 +21,27 @@ const getWeatherWithProgress = tool(
 
 export async function agentStreamCustom(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-agent-stream-custom");
-  const model = fakeModel()
-    .respondWithTools([
-      {
-        id: "call_weather_progress",
-        name: "get_weather_with_progress",
-        args: { city: "Seattle" },
-      },
-    ])
-    .respond(new AIMessage("It is sunny in Seattle."));
+  const model = chatModel([
+    {
+      toolCalls: [
+        {
+          id: "call_weather_progress",
+          name: "get_weather_with_progress",
+          args: { city: "Seattle" },
+        },
+      ],
+    },
+    "It is sunny in Seattle.",
+  ]);
   const agent = createAgent({ model, tools: [getWeatherWithProgress] });
 
   try {
     const stream = await agent.stream(
       { messages: [{ role: "user", content: "Weather in Seattle?" }] },
       {
-        ...tracingConfig(runtime, "agent_stream_custom", { framework: "langgraph" }),
+        ...tracingConfig(runtime, "agent_stream_custom", {
+          framework: "langgraph",
+        }),
         streamMode: "custom",
       },
     );

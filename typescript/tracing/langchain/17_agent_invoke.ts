@@ -1,16 +1,27 @@
-import { AIMessage } from "@langchain/core/messages";
-import { fakeModel } from "@langchain/core/testing";
 import { createAgent } from "langchain";
 
-import { getWeather, initRespan, shutdown, tracingConfig } from "./_shared";
+import {
+  chatModel,
+  getWeather,
+  initRespan,
+  shutdown,
+  tracingConfig,
+} from "./_shared";
 
 export async function agentInvoke(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-agent-invoke");
-  const model = fakeModel()
-    .respondWithTools([
-      { id: "call_weather", name: "get_weather", args: { city: "San Francisco" } },
-    ])
-    .respond(new AIMessage("It is sunny in San Francisco."));
+  const model = chatModel([
+    {
+      toolCalls: [
+        {
+          id: "call_weather",
+          name: "get_weather",
+          args: { city: "San Francisco" },
+        },
+      ],
+    },
+    "It is sunny in San Francisco.",
+  ]);
   const agent = createAgent({ model, tools: [getWeather] });
 
   try {

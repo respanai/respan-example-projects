@@ -1,11 +1,20 @@
-import { fakeModel } from "@langchain/core/testing";
-
-import { getWeather, initRespan, messageText, shutdown, tracingConfig } from "./_shared";
+import {
+  chatModel,
+  getWeather,
+  initRespan,
+  messageText,
+  shutdown,
+  tracingConfig,
+} from "./_shared";
 
 export async function modelBindTools(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-model-bind-tools");
-  const model = fakeModel().respondWithTools([
-    { id: "call_weather", name: "get_weather", args: { city: "Berlin" } },
+  const model = chatModel([
+    {
+      toolCalls: [
+        { id: "call_weather", name: "get_weather", args: { city: "Berlin" } },
+      ],
+    },
   ]);
   const modelWithTools = model.bindTools([getWeather]);
 
