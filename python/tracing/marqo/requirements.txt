@@ -1,4 +1,5 @@
-marqo>=3.5.1,<4.0.0
-python-dotenv>=1.0.0
-respan-ai>=2.17.0
+marqo>=3.5.1,<4
 respan-instrumentation-marqo>=0.1.0
+respan-tracing>=2.17,<3
+respan-sdk>=2.6.26
+python-dotenv>=1

@@ -1,52 +1,50 @@
-"""Trace synchronous Elasticsearch index, search, and error operations."""
-
-from __future__ import annotations
-
-from elasticsearch import Elasticsearch, NotFoundError
-from respan import workflow
-
-from _shared import example_attributes, local_elasticsearch, make_respan
-
-EXAMPLE_NAME = "sync-client"
+from _shared import full_payload, run_scenario, server
+from elasticsearch import Elasticsearch
 
 
-@workflow(name="elasticsearch_sync_client")
-def run_sync_client(prompt: str, endpoint: str) -> dict[str, object]:
-    client = Elasticsearch(endpoint)
-    try:
-        indexed = client.index(
-            index="audit-index",
-            id="doc-1",
-            document={"title": prompt, "category": "observability"},
-            refresh=True,
+def scenario():
+    document = {
+        "text": "controlled native document",
+        "vector": [0.0] * 5001,
+        "history": [{"position": i} for i in range(75)],
+        "false": False,
+        "zero": 0,
+        "empty": "",
+    }
+    with (
+        server(
+            sequence=[
+                (201, {"result": "created", "_id": "doc-1"}),
+                (200, {"found": True, "_source": document}),
+                (200, full_payload()),
+            ]
+        ) as (url, requests),
+        Elasticsearch(url, max_retries=0) as client,
+    ):
+        created = client.index(
+            index="controlled-index", id="doc-1", document=document, refresh=False
         )
-        searched = client.search(
-            index="audit-index",
-            query={"match": {"title": "Tracing"}},
+        fetched = client.get(index="controlled-index", id="doc-1")
+        found = client.search(
+            index="controlled-index",
+            knn={
+                "field": "vector",
+                "query_vector": [0.0] * 5001,
+                "k": 1,
+                "num_candidates": 1,
+            },
+            request_cache=False,
         )
-        missing_status = 0
-        try:
-            client.get(index="audit-index", id="missing")
-        except NotFoundError as exc:
-            missing_status = exc.status_code
+        assert len(found.body["hits"]["hits"][0]["_source"]["vector"]) == 5001
+        assert (
+            fetched.body["_source"] == document and created.body["result"] == "created"
+        )
         return {
-            "indexed": indexed["result"],
-            "hits": searched["hits"]["total"]["value"],
-            "missing_status": missing_status,
+            "native_requests": len(requests),
+            "vector_dimensions": 5001,
+            "history_items": 75,
         }
-    finally:
-        client.close()
-
-
-def main() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    try:
-        with local_elasticsearch() as endpoint, example_attributes(EXAMPLE_NAME):
-            result = run_sync_client("Tracing Elasticsearch", endpoint)
-            print(result)
-    finally:
-        respan.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    run_scenario("01_sync_client", scenario)

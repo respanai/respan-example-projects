@@ -1,138 +1,370 @@
-"""Shared helpers for Chroma tracing examples."""
+"""Local native Chroma examples; remote Respan export is explicit."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
+import chromadb
+import httpx
 from chromadb.config import Settings
-from dotenv import load_dotenv
-from respan import Respan
+from opentelemetry import context
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan_instrumentation_chroma import ChromaInstrumentor
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE, RESPAN_METADATA
+from respan_tracing.constants.context_constants import ENABLE_CONTENT_TRACING_KEY
 
-EXAMPLE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = EXAMPLE_DIR.parents[2]
-RESPAN_BASE_URL = "https://api.respan.ai/api"
-EXAMPLE_SET = "chroma"
+RUN_ID = os.getenv("RESPAN_EXAMPLE_RUN_ID") or "chroma-local-" + uuid4().hex
+SCENARIOS = (
+    "01_collection_lifecycle",
+    "02_write_and_read",
+    "03_query_and_filters",
+    "04_update_upsert_delete",
+    "05_propagated_attributes",
+    "06_async_http",
+    "07_privacy_and_errors",
+    "08_pending_siblings",
+)
+
+
+class Marker(SpanProcessor):
+    def __init__(self, scenario):
+        self.scenario = scenario
+
+    def on_start(self, span, parent_context=None):
+        data = {"run_id": RUN_ID, "scenario": self.scenario, "example_set": "chroma"}
+        span.set_attribute(RESPAN_METADATA, json.dumps(data))
+        for key, value in data.items():
+            span.set_attribute(RESPAN_METADATA + "." + key, value)
+
+    def on_end(self, span):
+        pass
 
 
 class DeterministicEmbeddingFunction:
-    """Small local embedding function to keep examples offline and repeatable."""
+    """No model downloads or provider requests."""
 
-    def __call__(self, input: list[str]) -> list[list[float]]:
-        return self._embed(input)
+    @staticmethod
+    def name():
+        return "controlled-local"
 
-    def embed_documents(self, input: list[str]) -> list[list[float]]:
-        return self._embed(input)
+    def __call__(self, input):
+        return [[float(sum(map(ord, text)) % 23), 1.0, 2.0, 3.0] for text in input]
 
-    def embed_query(self, input: list[str]) -> list[list[float]]:
-        return self._embed(input)
+    def embed_query(self, input):
+        return self(input)
 
-    def name(self) -> str:
-        return "respan-deterministic-embedding"
-
-    def _embed(self, input: list[str]) -> list[list[float]]:
-        vectors: list[list[float]] = []
-        for text in input:
-            normalized = str(text)
-            base = sum(ord(char) for char in normalized)
-            vectors.append([float((base + index * 7) % 23) / 23 for index in range(8)])
-        return vectors
+    def embed_documents(self, input):
+        return self(input)
 
 
-def load_example_env() -> None:
-    env_path = REPO_ROOT / ".env"
-    load_dotenv(env_path, override=True)
-    if not os.getenv("RESPAN_API_KEY"):
-        raise RuntimeError(f"RESPAN_API_KEY is required in {env_path}")
-    os.environ.setdefault("RESPAN_BASE_URL", RESPAN_BASE_URL)
-
-
-def create_respan(workflow_name: str) -> Respan:
-    load_example_env()
-    run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID") or uuid4().hex[:8]
-    return Respan(
-        api_key=os.environ["RESPAN_API_KEY"],
-        base_url=os.getenv("RESPAN_BASE_URL", RESPAN_BASE_URL),
-        app_name=workflow_name,
-        metadata={
-            "example_set": EXAMPLE_SET,
-            "workflow_name": workflow_name,
-            "run_id": run_id,
-        },
-        instrumentations=[ChromaInstrumentor()],
-        is_batching_enabled=False,
-        log_level=os.getenv("RESPAN_LOG_LEVEL", "WARNING"),
-    )
-
-
-def create_chroma_client():
-    import chromadb
-
-    return chromadb.Client(Settings(anonymized_telemetry=False))
-
-
-def workflow_attributes(workflow_name: str) -> dict[str, object]:
-    run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID") or uuid4().hex[:8]
+def records(count=3, dimension=4):
     return {
-        "trace_group_identifier": workflow_name,
-        "custom_identifier": f"{workflow_name}-{run_id}",
-        "metadata": {
-            "example_set": EXAMPLE_SET,
-            "workflow_name": workflow_name,
-            "example_run_id": run_id,
-            "run_id": run_id,
-        },
-    }
-
-
-def collection_name(workflow_name: str) -> str:
-    suffix = uuid4().hex[:8]
-    return f"respan_{workflow_name}_{suffix}".replace("-", "_")
-
-
-def sample_records() -> dict[str, Any]:
-    return {
-        "ids": ["doc-python", "doc-rust", "doc-pasta"],
-        "documents": [
-            "Python was created by Guido van Rossum and first released in 1991.",
-            "Rust is a systems programming language focused on safety and performance.",
-            "Pasta water should be salted before noodles are added.",
-        ],
+        "ids": [f"doc-{i}" for i in range(count)],
+        "documents": [f"Controlled native document {i}" for i in range(count)],
         "metadatas": [
-            {"topic": "programming", "source": "python", "rank": 1},
-            {"topic": "programming", "source": "rust", "rank": 2},
-            {"topic": "cooking", "source": "pasta", "rank": 3},
+            {"rank": i, "flag": False, "topic": "native"} for i in range(count)
         ],
-        "embeddings": [
-            [0.9, 0.1, 0.0, 0.0],
-            [0.7, 0.3, 0.0, 0.0],
-            [0.1, 0.9, 0.0, 0.0],
-        ],
+        "embeddings": [[float(i % 3)] * dimension for i in range(count)],
     }
 
 
-def compact_result(value: Any) -> Any:
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        for key, item in value.items():
-            if key in {"embeddings", "data"}:
-                result[key] = "present" if item is not None else None
+def collection(client, name="controlled_docs", *, count=3, dimension=4):
+    col = client.create_collection(name, embedding_function=None)
+    col.add(**records(count, dimension))
+    return col
+
+
+def _remote_exporter(wire, statuses):
+    from dotenv import load_dotenv
+    from respan_tracing.exporters.respan import RespanSpanExporter
+
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+    key = os.environ["RESPAN_API_KEY"]
+    exporter = RespanSpanExporter(
+        endpoint="https://api.respan.ai/api/v2/traces", api_key=key
+    )
+    original = exporter._session.post
+
+    def post(*args, **kwargs):
+        # Observe the actual released exporter body; never retain headers.
+        wire.append(json.loads(kwargs["data"]))
+        response = original(*args, **kwargs)
+        statuses.append(response.status_code)
+        return response
+
+    exporter._session.post = post
+    return exporter
+
+
+def run(scenario, function):
+    provider = TracerProvider()
+    memory = InMemorySpanExporter()
+    wire, statuses = [], []
+    provider.add_span_processor(Marker(scenario))
+    provider.add_span_processor(SimpleSpanProcessor(memory))
+    if os.getenv("RESPAN_EXAMPLE_EXPORT") == "1":
+        provider.add_span_processor(
+            SimpleSpanProcessor(_remote_exporter(wire, statuses))
+        )
+    owner = ChromaInstrumentor(tracer_provider=provider)
+    owner.activate()
+    with tempfile.TemporaryDirectory(prefix="respan-chroma-") as directory:
+        client = chromadb.PersistentClient(
+            path=directory,
+            settings=Settings(anonymized_telemetry=False, allow_reset=True),
+        )
+        try:
+            with provider.get_tracer("chroma-examples").start_as_current_span(
+                scenario, attributes={RESPAN_LOG_TYPE: "workflow"}
+            ):
+                result = function(client, provider)
+        finally:
+            if hasattr(client, "close"):
+                client.close()
             else:
-                result[key] = compact_result(item)
-        return result
-    if isinstance(value, list):
-        return [compact_result(item) for item in value]
-    return value
+                client._system.stop()
+            owner.deactivate()
+            provider.force_flush()
+    spans = [
+        {
+            "name": span.name,
+            "trace_id": f"{span.context.trace_id:032x}",
+            "span_id": f"{span.context.span_id:016x}",
+            "parent_span_id": f"{span.parent.span_id:016x}" if span.parent else None,
+            "attributes": dict(span.attributes),
+            "status": span.status.status_code.name,
+            "description": span.status.description,
+            "events": [
+                {"name": event.name, "attributes": dict(event.attributes)}
+                for event in span.events
+            ],
+        }
+        for span in memory.get_finished_spans()
+    ]
+    assert all(RESPAN_METADATA + ".run_id" in span["attributes"] for span in spans)
+    assert all("traceloop.span.kind" not in span["attributes"] for span in spans)
+    for span in spans:
+        if span["attributes"].get("db.system") == "chroma":
+            assert span["attributes"][RESPAN_LOG_TYPE] == "task"
+            assert not any(key.startswith("gen_ai.") for key in span["attributes"])
+    evidence = {
+        "scenario": scenario,
+        "run_id": RUN_ID,
+        "result": result,
+        "local": spans,
+        "wire": wire,
+        "statuses": statuses,
+    }
+    location = os.getenv("RESPAN_EXAMPLE_EVIDENCE_DIR")
+    if location:
+        path = Path(location)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / (scenario + ".json")).write_text(json.dumps(evidence))
+    provider.shutdown()
+    print(
+        json.dumps(
+            {
+                "scenario": scenario,
+                "spans": len(spans),
+                "result": result,
+                "http_statuses": statuses,
+            }
+        )
+    )
+    return evidence
 
 
-def print_result(label: str, value: Any) -> None:
-    print(f"\n== {label} ==")
-    print(json.dumps(compact_result(value), default=str, indent=2, sort_keys=True))
+def lifecycle(client, _provider):
+    col = client.create_collection(
+        "native_lifecycle", metadata={"flag": False, "zero": 0}, embedding_function=None
+    )
+    assert client.get_collection(col.name, embedding_function=None).id == col.id
+    assert (
+        client.get_or_create_collection(col.name, embedding_function=None).id == col.id
+    )
+    listed = client.list_collections(limit=0, offset=0)
+    assert listed == [] and client.count_collections() == 1
+    assert type(client.heartbeat()) is int
+    client.delete_collection(col.name)
+    return {"remaining": client.count_collections()}
 
 
-def finish_respan(respan: Respan) -> None:
-    respan.shutdown()
+def write_and_read(client, _provider):
+    col = collection(client, count=75, dimension=5001)
+    data = col.get(include=["embeddings", "documents", "metadatas"])
+    assert len(data["ids"]) == 75 and len(data["embeddings"][0]) == 5001
+    assert col.count() == 75 and len(col.peek(limit=1)["ids"]) == 1
+    return {
+        "records": len(data["ids"]),
+        "vector_dimensions": len(data["embeddings"][0]),
+    }
+
+
+def query_and_filters(client, _provider):
+    col = client.create_collection(
+        "native_callback", embedding_function=DeterministicEmbeddingFunction()
+    )
+    rows = records()
+    col.add(ids=rows["ids"], documents=rows["documents"], metadatas=rows["metadatas"])
+    query = col.query(
+        query_texts=["Controlled native document 0"],
+        n_results=2,
+        where={"flag": False},
+        where_document={"$contains": "native"},
+        include=["documents", "metadatas", "distances", "embeddings"],
+    )
+    assert len(query["ids"][0]) == 2
+    return {"matches": len(query["ids"][0])}
+
+
+def update_upsert_delete(client, _provider):
+    col = collection(client)
+    assert (
+        col.update(ids=["doc-0"], documents=["changed"], embeddings=[[0.0] * 4]) is None
+    )
+    assert (
+        col.upsert(ids=["new"], documents=["new native"], embeddings=[[1.0] * 4])
+        is None
+    )
+    deleted = col.delete(ids=["doc-1"])
+    col.modify(metadata={"flag": False, "zero": 0, "note": ""})
+    assert col.count() == 3
+    return {"remaining": col.count(), "native_delete_result": deleted}
+
+
+def propagated_attributes(client, _provider):
+    col = collection(client)
+    col.get(where={"rank": {"$gte": 0}}, limit=0, offset=0, include=["documents"])
+    if hasattr(col, "get_indexing_status"):
+        try:
+            status = col.get_indexing_status()
+        except NotImplementedError:
+            return {"native_indexing_status": "unsupported by the local engine"}
+        assert status is not None
+        return {"native_indexing_status": True}
+    return {"native_indexing_status": "unavailable in Chroma 0.5"}
+
+
+@contextmanager
+def native_server():
+    with tempfile.TemporaryDirectory(prefix="respan-chroma-http-") as path:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        with (Path(path) / "server.log").open("w") as log:
+            process = subprocess.Popen(
+                [
+                    str(Path(sys.executable).parent / "chroma"),
+                    "run",
+                    "--path",
+                    str(Path(path) / "db"),
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                ],
+                env=dict(os.environ, ANONYMIZED_TELEMETRY="False"),
+                stdout=log,
+                stderr=log,
+            )
+            try:
+                for _ in range(150):
+                    if process.poll() is not None:
+                        raise RuntimeError("Native Chroma server exited")
+                    try:
+                        if (
+                            httpx.get(
+                                f"http://127.0.0.1:{port}/api/v2/heartbeat", timeout=1
+                            ).status_code
+                            == 200
+                        ):
+                            break
+                    except httpx.HTTPError:
+                        pass
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError("Native Chroma server did not start")
+                yield port
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+
+
+def async_http(_client, _provider):
+    if not hasattr(chromadb, "AsyncHttpClient"):
+        return {"skipped": "Native Chroma 0.5 has no AsyncHttpClient"}
+
+    async def operations(port):
+        client = await chromadb.AsyncHttpClient(
+            host="127.0.0.1", port=port, settings=Settings(anonymized_telemetry=False)
+        )
+        col = await client.create_collection("native_async", embedding_function=None)
+        await col.add(ids=["a"], documents=["native HTTP"], embeddings=[[0.0, 1.0]])
+        output = await col.query(
+            query_embeddings=[[0.0, 1.0]],
+            n_results=1,
+            include=["embeddings", "documents"],
+        )
+        assert output["ids"] == [["a"]]
+        await client.delete_collection("native_async")
+        return {"matches": len(output["ids"][0])}
+
+    with native_server() as port:
+        return asyncio.run(operations(port))
+
+
+def privacy_and_errors(client, _provider):
+    col = client.create_collection("native_privacy", embedding_function=None)
+    token = context.attach(context.set_value(ENABLE_CONTENT_TRACING_KEY, False))
+    try:
+        assert (
+            col.add(ids=["a"], documents=["PRIVATE"], embeddings=[[0.0, 1.0]]) is None
+        )
+        assert col.get()["documents"] == ["PRIVATE"]
+    finally:
+        context.detach(token)
+    col.update(
+        ids=["a"],
+        documents=['Authorization: Bearer "CONTROLLED SPACE"'],
+        embeddings=[[0.0, 1.0]],
+    )
+    assert col.get()["documents"] == ['Authorization: Bearer "CONTROLLED SPACE"']
+    try:
+        col.add(ids=["duplicate", "duplicate"], embeddings=[[0.0, 1.0]] * 2)
+    except chromadb.errors.DuplicateIDError:
+        return {"native_error_preserved": True}
+    raise AssertionError("Expected native DuplicateIDError")
+
+
+def pending_siblings(client, provider):
+    col = collection(client)
+    carrier = context.get_current()
+
+    def get():
+        token = context.attach(carrier)
+        try:
+            return col.get(include=["embeddings"])
+        finally:
+            context.detach(token)
+
+    with ThreadPoolExecutor(2) as pool:
+        values = list(pool.map(lambda _: get(), range(2)))
+    assert len(values) == 2
+    return {"siblings": len(values)}

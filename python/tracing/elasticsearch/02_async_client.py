@@ -1,48 +1,35 @@
-"""Trace asynchronous Elasticsearch index and search operations."""
-
-from __future__ import annotations
-
-import asyncio
-
+from _shared import full_payload, run_scenario, server
 from elasticsearch import AsyncElasticsearch
-from respan import workflow
-
-from _shared import example_attributes, local_elasticsearch, make_respan
-
-EXAMPLE_NAME = "async-client"
 
 
-@workflow(name="elasticsearch_async_client")
-async def run_async_client(prompt: str, endpoint: str) -> dict[str, object]:
-    client = AsyncElasticsearch(endpoint)
-    try:
-        indexed = await client.index(
-            index="audit-index",
-            id="doc-1",
-            document={"title": prompt, "category": "async-observability"},
-            refresh=True,
-        )
-        searched = await client.search(
-            index="audit-index",
-            query={"match": {"title": "Async"}},
-        )
+async def scenario():
+    with server(
+        sequence=[
+            (201, {"result": "created", "_id": "doc-1"}),
+            (200, full_payload()),
+            (200, {"result": "deleted", "_id": "doc-1"}),
+        ]
+    ) as (url, requests):
+        async with AsyncElasticsearch(url, max_retries=0) as client:
+            created = await client.index(
+                index="controlled-index",
+                id="doc-1",
+                document={"text": "controlled async document", "flag": False},
+            )
+            response = await client.search(
+                index="controlled-index", query={"match_all": {}}, size=0
+            )
+            deleted = await client.delete(index="controlled-index", id="doc-1")
+            assert (
+                created.body["result"] == "created"
+                and deleted.body["result"] == "deleted"
+            )
+            assert len(response.body["hits"]["hits"][0]["_source"]["history"]) == 75
         return {
-            "indexed": indexed["result"],
-            "hits": searched["hits"]["total"]["value"],
+            "native_requests": len(requests),
+            "native_response_type": type(response).__name__,
         }
-    finally:
-        await client.close()
-
-
-def main() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    try:
-        with local_elasticsearch() as endpoint, example_attributes(EXAMPLE_NAME):
-            result = asyncio.run(run_async_client("Async Elasticsearch", endpoint))
-            print(result)
-    finally:
-        respan.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    run_scenario("02_async_client", scenario)

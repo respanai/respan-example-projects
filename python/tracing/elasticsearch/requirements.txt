@@ -1,4 +1,7 @@
 elasticsearch[async]>=8.13.0,<10.0.0
-python-dotenv>=1.0.0
-respan-ai>=2.16.1
+elastic-transport>=8.13.0,<10.0.0
 respan-instrumentation-elasticsearch>=0.1.0
+respan-tracing>=2.17.0,<3.0.0
+respan-sdk>=2.6.26
+opentelemetry-semantic-conventions-ai>=0.5.1,<0.6
+python-dotenv>=1.0.0

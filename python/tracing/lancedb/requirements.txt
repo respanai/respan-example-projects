@@ -1,4 +1,6 @@
-lancedb>=0.20.0,<1.0.0
-python-dotenv>=1.0.0
-respan-ai>=2.17.0
+respan-tracing>=2.17.0
+respan-sdk>=2.6.26
 respan-instrumentation-lancedb>=0.1.0
+lancedb>=0.20.0,<1.0.0
+pandas>=2
+python-dotenv>=1.0
