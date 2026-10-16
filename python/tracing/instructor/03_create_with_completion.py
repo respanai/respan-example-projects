@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Literal
 
-from _respan_instructor import create_respan_instructor_client
-from respan_tracing import workflow
+from _respan_instructor import create_respan_instructor_client, workflow
+from pydantic import BaseModel
 from respan_tracing.exporters import propagate_attributes
 
 
-class ReleaseNote(TypedDict):
+class ReleaseNote(BaseModel):
     title: str
     category: Literal["feature", "fix", "docs"]
     user_visible: bool
@@ -40,7 +40,13 @@ def draft_release_note(client, scenario: str) -> tuple[ReleaseNote, dict[str, ob
 
 def run_create_with_completion_example() -> None:
     respan, client = create_respan_instructor_client(
-        app_name="instructor-create-with-completion"
+        app_name="instructor-create-with-completion",
+        payload={
+            "title": "Canonical tracing",
+            "category": "fix",
+            "user_visible": True,
+            "bullets": ["Complete schemas", "Actual tool IDs"],
+        },
     )
 
     try:

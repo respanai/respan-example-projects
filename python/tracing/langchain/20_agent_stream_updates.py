@@ -1,12 +1,11 @@
 """Agent stream updates."""
 
-from langchain.agents import create_agent
-
 from _shared import fake_tool_calling_model, get_weather, init_telemetry, tracing_config
+from langchain.agents import create_agent
 
 
 def agent_stream_updates() -> None:
-    telemetry = init_telemetry("langchain-agent-stream-updates")
+    init_telemetry("langchain-agent-stream-updates")
     model = fake_tool_calling_model(
         tool_name="get_weather",
         args={"city": "Austin"},
@@ -22,5 +21,7 @@ def agent_stream_updates() -> None:
         )
     )
     print(chunks)
+
+
 if __name__ == "__main__":
     agent_stream_updates()

@@ -1,8 +1,7 @@
 """Chat: call the LlamaIndex OpenAI chat API."""
 
-from llama_index.core.llms import ChatMessage, MessageRole
-
 from _shared import build_llm, create_respan, print_result, traced_example
+from llama_index.core.llms import ChatMessage, MessageRole
 
 
 def run_chat() -> None:

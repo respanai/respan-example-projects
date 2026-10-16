@@ -1,10 +1,9 @@
 """Agent stream custom."""
 
+from _shared import fake_tool_calling_model, init_telemetry, tracing_config
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
-
-from _shared import fake_tool_calling_model, init_telemetry, tracing_config
 
 
 @tool
@@ -17,7 +16,7 @@ def progress_weather(city: str) -> str:
 
 
 def agent_stream_custom() -> None:
-    telemetry = init_telemetry("langchain-agent-stream-custom")
+    init_telemetry("langchain-agent-stream-custom")
     model = fake_tool_calling_model(
         tool_name="progress_weather",
         args={"city": "Denver"},
@@ -33,5 +32,7 @@ def agent_stream_custom() -> None:
         )
     )
     print(chunks)
+
+
 if __name__ == "__main__":
     agent_stream_custom()

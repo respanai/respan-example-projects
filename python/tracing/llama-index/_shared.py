@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from _fixture import build_fixture_embedding, build_fixture_llm
 from dotenv import load_dotenv
 from llama_index.core import Document, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.semconv_ai import SpanAttributes
 from respan import Respan
 from respan_instrumentation_llama_index import LlamaIndexInstrumentor
@@ -58,6 +60,13 @@ class ExampleSpan:
 
 
 def load_gateway_settings() -> GatewaySettings:
+    if os.getenv("RESPAN_LLAMA_INDEX_LIVE") != "1":
+        return GatewaySettings(
+            api_key="fixture-key",
+            base_url="https://fixture.invalid/v1",
+            model="gpt-4o-mini",
+            embedding_model="text-embedding-3-large",
+        )
     _load_env_files()
     api_key = os.environ["RESPAN_API_KEY"]
     base_url = os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api")
@@ -85,18 +94,33 @@ def create_respan(
         "example_set": "llama-index",
         "example_name": example_name,
         "example_run_id": run_id,
+        "run_id": run_id,
     }
     metadata.update(kwargs.pop("metadata", {}))
-    respan = Respan(
-        app_name=app_name,
-        api_key=settings.api_key,
-        base_url=settings.base_url,
-        metadata=metadata,
-        instrumentations=[
-            LlamaIndexInstrumentor(capture_content=capture_content),
-        ],
-        **kwargs,
+    exporting = (
+        os.getenv("RESPAN_LLAMA_INDEX_EXPORT") == "1"
+        or os.getenv("RESPAN_LLAMA_INDEX_LIVE") == "1"
     )
+    if exporting:
+        _load_env_files()
+    export_key = os.environ.get("RESPAN_API_KEY") if exporting else None
+    previous_key = os.environ.pop("RESPAN_API_KEY", None) if not exporting else None
+    try:
+        respan = Respan(
+            app_name=app_name,
+            api_key=export_key,
+            base_url=os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
+            metadata=metadata,
+            instrumentations=[
+                LlamaIndexInstrumentor(capture_content=capture_content),
+            ],
+            **kwargs,
+        )
+    finally:
+        if previous_key is not None:
+            os.environ["RESPAN_API_KEY"] = previous_key
+    if not exporting:
+        respan.telemetry.add_processor(exporter=InMemorySpanExporter())
     return ExampleContext(
         respan=respan,
         settings=settings,
@@ -122,6 +146,7 @@ def traced_example(
                 "example_set": "llama-index",
                 "example_name": context.example_name,
                 "example_run_id": context.run_id,
+                "run_id": context.run_id,
             },
         ):
             if root_span_name is None:
@@ -135,35 +160,36 @@ def traced_example(
                     example_span.set_input(input_data)
                 yield example_span
     finally:
-        context.respan.shutdown()
+        try:
+            context.respan.flush()
+        finally:
+            context.respan.shutdown()
 
 
 def configure_llama_index(settings: GatewaySettings) -> None:
-    Settings.llm = OpenAI(
-        model=settings.model,
-        api_key=settings.api_key,
-        api_base=settings.base_url,
-    )
-    Settings.embed_model = OpenAIEmbedding(
-        model=settings.embedding_model,
-        api_key=settings.api_key,
-        api_base=settings.base_url,
-    )
+    Settings.llm = build_llm(settings)
+    Settings.embed_model = build_embedding_model(settings)
 
 
 def build_llm(settings: GatewaySettings) -> OpenAI:
+    if os.getenv("RESPAN_LLAMA_INDEX_LIVE") != "1":
+        return build_fixture_llm()
     return OpenAI(
         model=settings.model,
         api_key=settings.api_key,
         api_base=settings.base_url,
+        max_retries=0,
     )
 
 
 def build_embedding_model(settings: GatewaySettings) -> OpenAIEmbedding:
+    if os.getenv("RESPAN_LLAMA_INDEX_LIVE") != "1":
+        return build_fixture_embedding()
     return OpenAIEmbedding(
         model=settings.embedding_model,
         api_key=settings.api_key,
         api_base=settings.base_url,
+        max_retries=0,
     )
 
 
@@ -191,9 +217,9 @@ def print_result(label: str, value: object) -> None:
 def _load_env_files() -> None:
     invocation_run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip()
     for env_path in _env_paths_from(start=Path(__file__).resolve().parent):
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
     for env_path in _env_paths_from(start=Path.cwd()):
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
     if invocation_run_id:
         os.environ["RESPAN_EXAMPLE_RUN_ID"] = invocation_run_id
 

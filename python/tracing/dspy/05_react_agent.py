@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dspy
-
 from _shared import managed_example, print_result, traced_example
 
 
@@ -31,8 +30,7 @@ def run_react_agent_example() -> None:
     ) as context:
         agent = dspy.ReAct(CityQuestion, tools=[lookup_city_fact], max_iters=3)
         question = (
-            "Use lookup_city_fact for Tokyo, then answer with the fact in "
-            "one sentence."
+            "Use lookup_city_fact for Tokyo, then answer with the fact in one sentence."
         )
 
         with traced_example(context, input_data={"question": question}) as span:

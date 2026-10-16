@@ -1,14 +1,13 @@
 """Prompt chain invoke."""
 
+from _shared import init_telemetry, tracing_config
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from _shared import init_telemetry, tracing_config
-
 
 def prompt_chain_invoke() -> None:
-    telemetry = init_telemetry("langchain-prompt-chain-invoke")
+    init_telemetry("langchain-prompt-chain-invoke")
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", "You write concise release notes."),
@@ -22,5 +21,7 @@ def prompt_chain_invoke() -> None:
         config=tracing_config("prompt_chain_invoke"),
     )
     print(response)
+
+
 if __name__ == "__main__":
     prompt_chain_invoke()

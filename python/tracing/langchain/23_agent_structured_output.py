@@ -1,9 +1,8 @@
 """Agent structured output."""
 
+from _shared import init_telemetry, make_openai_chat_model, tracing_config
 from langchain.agents import create_agent
 from pydantic import BaseModel, Field
-
-from _shared import init_telemetry, make_openai_chat_model, tracing_config
 
 
 class ContactInfo(BaseModel):
@@ -14,10 +13,12 @@ class ContactInfo(BaseModel):
 
 
 def agent_structured_output() -> None:
-    telemetry = init_telemetry("langchain-agent-structured-output")
+    init_telemetry("langchain-agent-structured-output")
     model = make_openai_chat_model()
     if model is None:
-        print("Set OPENAI_API_KEY or RESPAN_API_KEY to run this provider-backed example.")
+        print(
+            "Set OPENAI_API_KEY or RESPAN_API_KEY to run this provider-backed example."
+        )
         return
 
     agent = create_agent(
@@ -37,5 +38,7 @@ def agent_structured_output() -> None:
         config=tracing_config("agent_structured_output"),
     )
     print(response["structured_response"])
+
+
 if __name__ == "__main__":
     agent_structured_output()

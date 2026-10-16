@@ -1,98 +1,66 @@
-# LangChain Respan Tracing Examples
+# LangChain Respan tracing examples
 
-These numbered scripts demonstrate LangChain callback surfaces that
-`respan-instrumentation-langchain` exports through Respan tracing. Each numbered
-file focuses on one LangChain function or behavior.
-
-Most scripts use LangChain fake models, so they run without model-provider API
-keys. `13_model_with_structured_output.py` and
-`23_agent_structured_output.py` use a provider-backed chat model because
-structured output is provider/model dependent.
-
-## Setup
+Run all 34 scripts with released SDKs and controlled responses, without API keys:
 
 ```bash
-cd /home/yuyang/KeywordsAI/respan-example-projects/python/tracing/langchain
-pip install -r requirements.txt
-
-# For local SDK development:
-pip install -e /home/yuyang/KeywordsAI/respan/python-sdks/respan-tracing \
-            -e /home/yuyang/KeywordsAI/respan/python-sdks/instrumentations/respan-instrumentation-langchain
+cd python/tracing/langchain
+python -m pip install -r requirements.txt
+python run_all_examples.py
 ```
 
-Optional tracing export:
+The default is fixture mode with an in-memory OTel exporter. It does not load the
+repository `.env` or send traces. Fake models are real LangChain SDK classes;
+structured output and the provider example use real ChatOpenAI/OpenAI clients
+with controlled HTTP/SSE responses. Tool binding retains the actual schemas.
+
+To export these controlled fixtures explicitly:
 
 ```bash
-export RESPAN_API_KEY=your_respan_api_key
-export RESPAN_BASE_URL=https://api.respan.ai/api
+RESPAN_EXPORT=1 RESPAN_EXAMPLE_RUN_ID=your-unique-marker python run_all_examples.py
 ```
 
-Provider-backed structured output examples also need:
+Export loads the repository-root `.env` with `override=False`, or the file named
+by `RESPAN_ENV_FILE`. Set `RESPAN_API_KEY`; `RESPAN_BASE_URL` defaults to
+`https://api.respan.ai/api`. The run marker appears in Respan metadata for scoped
+trace inspection. Credentials are not printed. Export is a separate opt-in from
+model-provider access.
 
-```bash
-export OPENAI_API_KEY=your_openai_api_key
-# Optional OpenAI-compatible proxy:
-export OPENAI_BASE_URL=https://your-openai-compatible-base-url
-```
+To call a real provider in structured-output examples 13/23, set
+`LANGCHAIN_LIVE=1`, `OPENAI_API_KEY`, and optionally `OPENAI_BASE_URL` and
+`LANGCHAIN_OPENAI_MODEL`, then run either script. Live support depends on the
+selected provider/model and is not established by the controlled fixtures.
+Script 31 is a deterministic protocol/error fixture and should stay in fixture
+mode. These fixtures do not validate the full Langflow application.
 
-Run one example:
+The runner uses fresh subprocesses, runs the entire bounded set, reports failures,
+and explicitly skips APIs absent from the installed release. Current validation
+uses LangChain 1.4.3/core 1.6.6/OpenAI integration 1.6.7/LangGraph 1.2.12. At the
+supported minimum (LangChain/core 0.3.0, OpenAI 0.2.0, LangGraph 0.2.20), scripts
+19–23 require the newer `create_agent` API and 30 requires dynamic interrupt/resume;
+28 compatible scripts run and six are explicitly skipped. Set
+`LANGCHAIN_RUNNER_REPORT` to save counts and `LANGCHAIN_CAPTURE_DIR` to save local
+span attributes for comparison.
 
-```bash
-python 00_quickstart.py
-```
-
-Run the complete bounded set with `python run_all_examples.py`.
-
-## Examples
-
-| Script | LangChain function or behavior |
+| Scripts | SDK surface |
 | --- | --- |
-| `00_quickstart.py` | Hello-world Respan LangChain instrumentation quickstart |
-| `01_chat_model_invoke.py` | Chat model `invoke()` |
-| `02_chat_model_stream.py` | Chat model `stream()` |
-| `03_chat_model_batch.py` | Chat model `batch()` |
-| `04_chat_model_batch_as_completed.py` | Chat model `batch_as_completed()` |
-| `05_chat_model_ainvoke.py` | Chat model `ainvoke()` |
-| `06_chat_model_astream.py` | Chat model `astream()` |
-| `07_chat_model_abatch.py` | Chat model `abatch()` |
-| `08_chat_model_abatch_as_completed.py` | Chat model `abatch_as_completed()` |
-| `09_chat_model_astream_events.py` | Chat model `astream_events()` |
-| `10_llm_invoke.py` | Legacy string LLM `invoke()` |
-| `11_llm_stream.py` | Legacy string LLM `stream()` |
-| `12_model_bind_tools.py` | Model `bind_tools()` and tool-call execution |
-| `13_model_with_structured_output.py` | Model `with_structured_output()` |
-| `14_tool_invoke.py` | Tool `invoke()` |
-| `15_tool_ainvoke.py` | Tool `ainvoke()` |
-| `16_prompt_chain_invoke.py` | Prompt/model/parser chain `invoke()` |
-| `17_runnable_parallel_invoke.py` | `RunnableParallel.invoke()` |
-| `18_retriever_invoke.py` | Retriever `invoke()` |
-| `19_agent_invoke.py` | Agent `invoke()` |
-| `20_agent_stream_updates.py` | Agent `stream(..., stream_mode="updates")` |
-| `21_agent_stream_messages.py` | Agent `stream(..., stream_mode="messages")` |
-| `22_agent_stream_custom.py` | Agent `stream(..., stream_mode="custom")` |
-| `23_agent_structured_output.py` | Agent `response_format` structured output |
-| `24_custom_event.py` | `dispatch_custom_event()` |
-| `25_runnable_with_retry.py` | Runnable `with_retry()` |
-| `26_chain_error.py` | Chain error callback |
-| `27_tool_error.py` | Tool error callback |
-| `28_retriever_error.py` | Retriever error callback |
+| 00–09 | Quickstart, chat invoke/stream/batch/as_completed and async/events |
+| 10–13 | Text LLM, tool binding, provider structured output |
+| 14–18 | Sync/async tools, prompt chains, parallel runnables, retrievers |
+| 19–23 | Current agents, update/message/custom streams, structured agent output |
+| 24–28 | Custom events, retries, chain/tool/retriever errors |
+| 29–30 | State graph invoke/stream, checkpointed interrupt/resume |
+| 31 | Real OpenAI HTTP/SSE/async responses, source cache/reasoning usage, errors |
+| 32 | Environment start privacy bound and Respan context end veto |
+| 33 | Current calls distinct from history, actual IDs, full 5000-dimensional tool artifacts |
 
-## Coverage Notes
+Callbacks capture actual completion messages, source usage, current tool calls,
+full schemas/IDs/vectors and documents. Private runs keep native results while
+omitting content. Errors have OTel ERROR, no fabricated output or HTTP status.
+The adapter keeps caller context across streaming yields and uses native run
+parent IDs for trace hierarchy. Local checks and HTTP export acceptance do not
+establish stored-trace semantic acceptance; inspect same-run trees and records.
 
-The set is based on current LangChain Python docs and the current
-`respan-instrumentation-langchain` callback handler. It covers the documented
-model invocation methods (`invoke`, `stream`, batch variants, async variants,
-events), tool calling, structured output, tools, retrievers, agents, streaming
-modes, custom events, retries, and error callbacks. It does not enumerate every
-provider integration or every helper method inherited by `Runnable`, because
-those map to the same callback types above.
-
-Official docs checked:
-
-- https://docs.langchain.com/oss/python/langchain/models
-- https://docs.langchain.com/oss/python/langchain/tools
-- https://docs.langchain.com/oss/python/langchain/agents
-- https://docs.langchain.com/oss/python/langchain/streaming
-- https://docs.langchain.com/oss/python/langchain/structured-output
-- https://docs.langchain.com/oss/python/langchain/retrieval
-- https://reference.langchain.com/python/langchain-core/callbacks/manager/dispatch_custom_event
+Official references: [models](https://docs.langchain.com/oss/python/langchain/models),
+[agents](https://docs.langchain.com/oss/python/langchain/agents),
+[streaming](https://docs.langchain.com/oss/python/langchain/streaming), and
+[LangGraph interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts).

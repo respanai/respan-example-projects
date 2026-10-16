@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dspy
-
 from _shared import managed_example, print_result, traced_example
 
 

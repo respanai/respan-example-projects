@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +41,11 @@ EXAMPLES = tuple(
             "chain_error",
             "tool_error",
             "retriever_error",
+            "langgraph_state_graph",
+            "langgraph_interrupt_resume",
+            "provider_http_and_sse",
+            "privacy",
+            "tool_artifact_vectors",
         )
     )
 )
@@ -46,9 +53,44 @@ EXAMPLES = tuple(
 
 def main() -> None:
     base_dir = Path(__file__).resolve().parent
+    passed = 0
+    skipped = []
+    failed = []
+    from langchain import agents
+
+    has_agent = hasattr(agents, "create_agent")
+    try:
+        from langgraph import types
+
+        has_interrupt = hasattr(types, "interrupt")
+    except ImportError:
+        has_interrupt = False
     for script_name in EXAMPLES:
+        index = int(script_name[:2])
+        if (19 <= index <= 23 and not has_agent) or (index == 30 and not has_interrupt):
+            skipped.append(script_name)
+            print(f"SKIP {script_name}: public API absent in installed minimum")
+            continue
         print(f"\n=== {script_name} ===", flush=True)
-        subprocess.run([sys.executable, str(base_dir / script_name)], check=True)
+        result = subprocess.run(
+            [sys.executable, str(base_dir / script_name)], check=False
+        )
+        if result.returncode:
+            failed.append(script_name)
+        else:
+            passed += 1
+    summary = {
+        "passed": passed,
+        "skipped": skipped,
+        "failed": failed,
+        "total": len(EXAMPLES),
+    }
+    print(json.dumps(summary))
+    target = os.getenv("LANGCHAIN_RUNNER_REPORT")
+    if target:
+        Path(target).write_text(json.dumps(summary, indent=2))
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

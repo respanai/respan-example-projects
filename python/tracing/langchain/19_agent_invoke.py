@@ -1,12 +1,11 @@
 """Agent invoke."""
 
-from langchain.agents import create_agent
-
 from _shared import fake_tool_calling_model, get_weather, init_telemetry, tracing_config
+from langchain.agents import create_agent
 
 
 def agent_invoke() -> None:
-    telemetry = init_telemetry("langchain-agent-invoke")
+    init_telemetry("langchain-agent-invoke")
     model = fake_tool_calling_model(
         tool_name="get_weather",
         args={"city": "San Francisco"},
@@ -22,5 +21,7 @@ def agent_invoke() -> None:
         config=tracing_config("agent_invoke"),
     )
     print(response["messages"][-1].content)
+
+
 if __name__ == "__main__":
     agent_invoke()

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
-
-from _respan_instructor import create_respan_instructor_client
-from respan_tracing import workflow
+from _respan_instructor import create_respan_instructor_client, workflow
+from pydantic import BaseModel
 from respan_tracing.exporters import propagate_attributes
 
 
-class InvoiceSummary(TypedDict):
+class InvoiceSummary(BaseModel):
     vendor: str
     invoice_id: str
     currency: str
@@ -36,7 +34,16 @@ def extract_invoice(client, scenario: str) -> InvoiceSummary:
 
 
 def run_create_example() -> None:
-    respan, client = create_respan_instructor_client(app_name="instructor-create")
+    respan, client = create_respan_instructor_client(
+        app_name="instructor-create",
+        payload={
+            "vendor": "Northwind Cloud",
+            "invoice_id": "NW-1042",
+            "currency": "USD",
+            "item_count": 3,
+            "total_usd": 298.0,
+        },
+    )
     try:
         with propagate_attributes(
             thread_identifier="instructor_example_01_create",

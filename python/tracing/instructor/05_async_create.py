@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TypedDict
 
-from _respan_instructor import create_respan_instructor_client
-from respan_tracing import workflow
+from _respan_instructor import create_respan_instructor_client, workflow
+from pydantic import BaseModel
 from respan_tracing.exporters import propagate_attributes
 
 
-class ProjectBrief(TypedDict):
+class ProjectBrief(BaseModel):
     title: str
     owner: str
     milestones: list[str]
@@ -39,6 +38,12 @@ async def run_async_create_example() -> None:
     respan, client = create_respan_instructor_client(
         app_name="instructor-async-create",
         async_client=True,
+        payload={
+            "title": "Respan Instructor tracing launch",
+            "owner": "Jordan",
+            "milestones": ["SDK validation", "Docs update", "Release intent"],
+            "risk": "Schema drift",
+        },
     )
 
     try:
@@ -56,6 +61,7 @@ async def run_async_create_example() -> None:
 
         print(dict(project_brief))
     finally:
+        await client.client.close()
         respan.shutdown()
 
 
