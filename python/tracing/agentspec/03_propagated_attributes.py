@@ -1,58 +1,29 @@
-"""Run AgentSpec with Respan customer and thread attributes."""
+"""Propagated thread metadata and separate sequential-agent payloads."""
 
-from pyagentspec.adapters.langgraph import AgentSpecLoader
-from pyagentspec.agent import Agent
-from pyagentspec.llms import OpenAiConfig
-from _shared import build_respan, example_scope, latest_message_content
+from _fixtures import build_agent, fixture_model
+from _shared import build_respan, example_scope, latest_message_content, run_id
 
 
-def run_propagated_attributes() -> str:
-    respan, model = build_respan(
-        example_name="propagated-attributes",
-        workflow_name="agentspec_propagated_attributes",
-        use_static_identity=False,
-    )
+def main():
+    respan = build_respan("propagated-attributes")
     with example_scope(
-        "propagated-attributes",
-        customer_identifier="agentspec-example-user",
-        thread_identifier="agentspec-example-thread",
-        metadata={"scenario": "propagated_attributes"},
+        "propagated-attributes", thread_identifier=run_id() + ":conversation"
     ):
-        agent = Agent(
-            name="support_assistant",
-            description="A concise support assistant.",
-            llm_config=OpenAiConfig(
-                name="respan-gateway",
-                model_id=model,
-            ),
-            system_prompt=(
-                "Answer in one short sentence using the phrase "
-                "'propagated Respan attributes'."
-            ),
-        )
-        langgraph_agent = AgentSpecLoader().load_component(agent)
-
         try:
-            result = langgraph_agent.invoke(
-                input={
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": (
-                                "Say that this trace is testing propagated "
-                                "Respan attributes."
-                            ),
-                        }
-                    ]
-                }
-            )
-
-            output = latest_message_content(result)
-            print(output)
-            return output
+            with fixture_model():
+                outputs = [
+                    latest_message_content(
+                        build_agent("Agent-" + prompt).invoke(
+                            {"messages": [{"role": "user", "content": prompt}]}
+                        )
+                    )
+                    for prompt in ["first", "second"]
+                ]
+            assert outputs == ["answer first", "answer second"]
+            print(outputs)
         finally:
             respan.shutdown()
 
 
 if __name__ == "__main__":
-    run_propagated_attributes()
+    main()
