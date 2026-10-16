@@ -1,96 +1,68 @@
-from __future__ import annotations
-
-import json
-
-from _shared import (
-    chat_text,
-    close_provider,
-    example_attributes,
-    make_custom_identifier,
-    make_model,
-    make_respan,
-    print_lookup,
-    workflow_name,
-)
-from respan import tool, workflow
-
-EXAMPLE_NAME = "chat-tool-calling"
-
-WEATHER_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Return deterministic weather for a city.",
-        "parameters": {
-            "type": "object",
-            "properties": {"city": {"type": "string"}},
-            "required": ["city"],
-        },
-    },
-}
-_MODEL = None
+from _shared import CHAT, close, native, run_case
+from ibm_watsonx_ai.foundation_models.schema import TextChatParameters
 
 
-@tool(name="get_weather")
-def get_weather(city: str) -> dict[str, object]:
-    return {"city": city, "condition": "sunny", "temperature_c": 24}
-
-
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _chat_tool_calling_workflow(city: str) -> dict[str, object]:
-    messages = [
-        {"role": "system", "content": "Use the weather tool when needed."},
-        {"role": "user", "content": f"What is the weather in {city}?"},
+def action(provider):
+    history = [
+        {"role": "user", "content": f"Controlled history {n}"} for n in range(75)
     ]
-    response = _MODEL.chat(
-        messages=messages,
-        tools=[WEATHER_TOOL],
-        tool_choice_option="auto",
-        params={"max_new_tokens": 80},
-    )
-    message = response["choices"][0]["message"]
-    call = message["tool_calls"][0]
-    arguments = call["function"]["arguments"]
-    if isinstance(arguments, str):
-        arguments = json.loads(arguments)
-    result = get_weather(**arguments)
-    messages.extend(
-        [
-            message,
+    history[0] = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "historical-call",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": "{}"},
+            }
+        ],
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "city": {"type": "string"},
+            "api_key": {"type": "string", "example": "controlled-secret"},
+        },
+        "required": ["city"],
+    }
+    tools = [
+        {"type": "function", "function": {"name": "get_weather", "parameters": schema}}
+    ]
+    c, m, *_ = native(CHAT)
+    try:
+        result = m.chat(
+            messages=history,
+            tools=tools,
+            tool_choice_option="auto",
+            params=TextChatParameters(
+                temperature=0, max_tokens=0, response_format={"type": "json_object"}
+            ),
+        )
+        call = result["choices"][0]["message"]["tool_calls"][0]
+        followup = history + [
+            result["choices"][0]["message"],
             {
                 "role": "tool",
                 "tool_call_id": call["id"],
-                "content": json.dumps(result, sort_keys=True),
+                "content": "Controlled Tokyo weather: sunny.",
             },
         ]
-    )
-    follow_up = _MODEL.chat(messages=messages, params={"max_new_tokens": 80})
-    return {
-        "tool_call_id": call["id"],
-        "tool_result": result,
-        "answer": chat_text(follow_up),
-    }
-
-
-def run_chat_tool_calling() -> None:
-    global _MODEL
-    model = make_model()
-    _MODEL = model
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    output = ""
-
-    try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            output = _chat_tool_calling_workflow("Tokyo")
+        m.chat(messages=followup, tools=tools)
     finally:
-        try:
-            close_provider(model)
-        finally:
-            respan.shutdown()
-
-    print_lookup(EXAMPLE_NAME, custom_identifier, output)
+        close(c)
+    blocked = {
+        "model_id": "reported-granite",
+        "choices": [],
+        "prompt_feedback": {"block_reason": "SAFETY"},
+        "custom": {"flag": False},
+    }
+    c, m, *_ = native(blocked)
+    try:
+        assert m.chat(messages=[]) == blocked
+    finally:
+        close(c)
+    return "full history/settings/schema, historical/current IDs, native empty feedback"
 
 
 if __name__ == "__main__":
-    run_chat_tool_calling()
+    run_case("watsonx_chat_tools", action)

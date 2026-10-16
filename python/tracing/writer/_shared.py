@@ -7,14 +7,18 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
+from _fixtures import NativeRuntime
 from dotenv import load_dotenv
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan import Respan, propagate_attributes
 from respan_instrumentation_writer import WriterInstrumentor
+from respan_tracing.exporters import RespanSpanExporter
+from respan_tracing.exporters.respan import _span_to_otlp_json
 from writerai import AsyncWriter, Writer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
+_LOCAL_RUN_ID = "writer-local-" + uuid4().hex[:12]
 DEFAULT_WRITER_MODEL = "palmyra-x5"
 DEFAULT_WRITER_VISION_MODEL = "palmyra-vision"
 DEFAULT_WRITER_TRANSLATION_MODEL = "palmyra-translate"
@@ -59,66 +63,69 @@ def use_mock_writer() -> bool:
 
 
 def example_run_id() -> str:
-    return os.getenv("RESPAN_EXAMPLE_RUN_ID") or f"writer-{uuid4().hex[:12]}"
+    return os.getenv("RESPAN_EXAMPLE_RUN_ID") or _LOCAL_RUN_ID
 
 
 def client_mode() -> str:
     return "mock-writer" if use_mock_writer() else "live-writer"
 
 
-def make_respan(example_name: str) -> Respan:
-    api_key = require_respan_api_key()
-    return Respan(
-        api_key=api_key,
-        base_url=respan_base_url(),
-        app_name="writer-examples",
-        instrumentations=[WriterInstrumentor()],
-        environment=os.getenv("RESPAN_ENVIRONMENT", "example"),
-        metadata={
-            "integration": "writer",
-            "example": example_name,
-            "example_set": "writer",
-            "example_run_id": example_run_id(),
-            "run_id": example_run_id(),
-        },
-        is_batching_enabled=False,
-    )
+def make_respan(example_name: str, *, capture_content=True) -> Respan:
+    export = os.getenv("RESPAN_EXAMPLE_EXPORT") == "1"
+    if export:
+        load_root_env()
+    key = os.environ.pop("RESPAN_API_KEY", None)
+    try:
+        respan = Respan(
+            api_key=None,
+            app_name="writer-examples",
+            instrumentations=[WriterInstrumentor(capture_content=capture_content)],
+            metadata={
+                "integration": "writer",
+                "example": example_name,
+                "example_set": "writer",
+                "example_run_id": example_run_id(),
+                "run_id": example_run_id(),
+            },
+            is_auto_instrument=False,
+            is_batching_enabled=False,
+            log_level="WARNING",
+        )
+    finally:
+        if key is not None:
+            os.environ["RESPAN_API_KEY"] = key
+    respan.example_memory = InMemorySpanExporter()
+    respan.telemetry.add_processor(respan.example_memory, is_batching_enabled=False)
+    if export:
+        if not key:
+            raise RuntimeError("RESPAN_EXAMPLE_EXPORT=1 requires RESPAN_API_KEY")
+        respan.telemetry.add_processor(
+            RespanSpanExporter(
+                endpoint="https://api.respan.ai/api/v2/traces", api_key=key
+            ),
+            is_batching_enabled=False,
+        )
+    return respan
 
 
 def make_client() -> Writer:
-    load_root_env()
     if use_mock_writer():
-        return Writer(
-            api_key="mock-writer-key",
-            base_url=MOCK_BASE_URL,
-            max_retries=0,
-            http_client=httpx.Client(
-                transport=httpx.MockTransport(_mock_writer_response)
-            ),
-        )
-
-    api_key = writer_api_key()
-    if not api_key:
-        raise RuntimeError("WRITER_API_KEY must be set for live Writer examples")
-    return Writer(api_key=api_key, max_retries=0)
+        return NativeRuntime().client()
+    load_root_env()
+    key = writer_api_key()
+    if not key:
+        raise RuntimeError("WRITER_API_KEY is required for explicit live calls")
+    return Writer(api_key=key, max_retries=0)
 
 
 async def make_async_client() -> AsyncWriter:
-    load_root_env()
     if use_mock_writer():
-        return AsyncWriter(
-            api_key="mock-writer-key",
-            base_url=MOCK_BASE_URL,
-            max_retries=0,
-            http_client=httpx.AsyncClient(
-                transport=httpx.MockTransport(_mock_writer_response)
-            ),
-        )
-
-    api_key = writer_api_key()
-    if not api_key:
-        raise RuntimeError("WRITER_API_KEY must be set for live Writer examples")
-    return AsyncWriter(api_key=api_key, max_retries=0)
+        return NativeRuntime().async_client()
+    load_root_env()
+    key = writer_api_key()
+    if not key:
+        raise RuntimeError("WRITER_API_KEY is required for explicit live calls")
+    return AsyncWriter(api_key=key, max_retries=0)
 
 
 def workflow_name(example_name: str) -> str:
@@ -196,9 +203,26 @@ def print_result(label: str, value: Any) -> None:
 
 
 def finish_respan(respan: Respan) -> None:
-    shutdown = getattr(respan, "shutdown", None)
-    if shutdown is not None:
-        shutdown()
+    try:
+        respan.flush()
+        directory = os.getenv("RESPAN_EXAMPLE_REPORT_DIR")
+        if directory:
+            import sys
+
+            folder = Path(directory)
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / (Path(sys.argv[0]).stem + ".json")).write_text(
+                json.dumps(
+                    [
+                        _span_to_otlp_json(span)
+                        for span in respan.example_memory.get_finished_spans()
+                    ],
+                    indent=2,
+                )
+            )
+    finally:
+        respan.shutdown()
+        respan.telemetry.tracer.tracer_provider.shutdown()
 
 
 def close_client(client: Writer) -> None:
@@ -207,196 +231,3 @@ def close_client(client: Writer) -> None:
 
 async def close_async_client(client: AsyncWriter) -> None:
     await client.close()
-
-
-def _json_body(request: httpx.Request) -> dict[str, Any]:
-    if not request.content:
-        return {}
-    try:
-        body = json.loads(request.content.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
-def _response(request: httpx.Request, payload: dict[str, Any]) -> httpx.Response:
-    return httpx.Response(200, json=payload, request=request)
-
-
-def _sse_response(
-    request: httpx.Request, events: list[dict[str, Any]]
-) -> httpx.Response:
-    content = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
-    content += "data: [DONE]\n\n"
-    return httpx.Response(
-        200,
-        content=content.encode("utf-8"),
-        headers={"content-type": "text/event-stream"},
-        request=request,
-    )
-
-
-def _chat_payload(body: dict[str, Any]) -> dict[str, Any]:
-    messages = body.get("messages") or []
-    user_content = ""
-    if messages and isinstance(messages[-1], dict):
-        user_content = str(messages[-1].get("content") or "")
-
-    if user_content == "RESPAN_EXPECTED_WRITER_ERROR":
-        return {"error": {"message": "Writer deterministic provider limit"}}
-
-    content = f"Writer mock response for: {user_content[:80]}"
-    tool_calls = None
-    finish_reason = "stop"
-    if body.get("tools"):
-        content = ""
-        finish_reason = "tool_calls"
-        tool_calls = [
-            {
-                "id": "call_mock_weather",
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": json.dumps({"city": "Tokyo"}),
-                },
-            }
-        ]
-    elif body.get("response_format"):
-        content = json.dumps(
-            {"summary": "mock structured output", "sentiment": "positive"}
-        )
-
-    message: dict[str, Any] = {"role": "assistant", "content": content}
-    if tool_calls:
-        message["tool_calls"] = tool_calls
-
-    return {
-        "id": "chatcmpl_mock",
-        "object": "chat.completion",
-        "created": 1,
-        "model": body.get("model") or DEFAULT_WRITER_MODEL,
-        "choices": [{"index": 0, "finish_reason": finish_reason, "message": message}],
-        "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
-    }
-
-
-def _chat_stream_response(
-    request: httpx.Request, body: dict[str, Any]
-) -> httpx.Response:
-    model = body.get("model") or DEFAULT_WRITER_MODEL
-    events = [
-        {
-            "id": "chatcmpl_mock_stream",
-            "object": "chat.completion.chunk",
-            "created": 1,
-            "model": model,
-            "choices": [
-                {"index": 0, "delta": {"role": "assistant", "content": "Writer "}}
-            ],
-        },
-        {
-            "id": "chatcmpl_mock_stream",
-            "object": "chat.completion.chunk",
-            "created": 1,
-            "model": model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": "streaming response."},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11},
-        },
-    ]
-    return _sse_response(request, events)
-
-
-def _completion_stream_response(request: httpx.Request) -> httpx.Response:
-    return _sse_response(request, [{"value": "Mock "}, {"value": "completion."}])
-
-
-def _application_stream_response(request: httpx.Request) -> httpx.Response:
-    return _sse_response(
-        request,
-        [
-            {"delta": {"content": "Mock application "}},
-            {"delta": {"content": "stream."}},
-        ],
-    )
-
-
-def _mock_writer_response(request: httpx.Request) -> httpx.Response:
-    path = request.url.path
-    body = _json_body(request)
-
-    if path == "/v1/chat":
-        messages = body.get("messages") or []
-        if messages and messages[-1].get("content") == "RESPAN_EXPECTED_WRITER_ERROR":
-            return httpx.Response(
-                429,
-                json={"error": {"message": "Writer deterministic provider limit"}},
-                request=request,
-            )
-        if body.get("stream") is True:
-            return _chat_stream_response(request, body)
-        return _response(request, _chat_payload(body))
-
-    if path == "/v1/completions":
-        if body.get("stream") is True:
-            return _completion_stream_response(request)
-        return _response(
-            request,
-            {
-                "model": body.get("model") or DEFAULT_WRITER_MODEL,
-                "choices": [{"text": "Mock Writer text completion."}],
-            },
-        )
-
-    if path == "/v1/graphs/question":
-        return _response(
-            request,
-            {
-                "answer": "Mock graph answer grounded in the example graph.",
-                "question": body.get("question") or "",
-                "sources": [],
-            },
-        )
-
-    if path.startswith("/v1/applications/"):
-        if body.get("stream") is True:
-            return _application_stream_response(request)
-        return _response(
-            request,
-            {
-                "title": "mock output",
-                "suggestion": "Mock application generation.",
-            },
-        )
-
-    if path == "/v1/vision":
-        return _response(
-            request, {"data": "Mock vision analysis for the provided file."}
-        )
-
-    if path == "/v1/translation":
-        return _response(request, {"data": "Bonjour depuis Writer."})
-
-    if path == "/v1/tools/web-search":
-        return _response(
-            request,
-            {
-                "query": body.get("query") or "",
-                "answer": "Mock web search answer.",
-                "sources": [
-                    {"url": "https://www.respan.ai", "raw_content": "Respan tracing"}
-                ],
-            },
-        )
-
-    if path.startswith("/v1/tools/pdf-parser/"):
-        return _response(request, {"content": "# Mock PDF\nParsed Writer PDF content."})
-
-    return httpx.Response(
-        404, json={"error": f"Unhandled mock path: {path}"}, request=request
-    )

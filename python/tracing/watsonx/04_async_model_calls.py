@@ -1,80 +1,35 @@
-from __future__ import annotations
-
 import asyncio
 
-from _shared import (
-    chat_text,
-    close_provider,
-    example_attributes,
-    generated_text,
-    make_custom_identifier,
-    make_model,
-    make_respan,
-    print_lookup,
-    stream_chunk_text,
-    workflow_name,
-)
-from respan import workflow
-
-EXAMPLE_NAME = "async-model-calls"
-_MODEL = None
+from _shared import CHAT, GEN, close, native, run_case
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-async def _async_model_workflow(prompt: str) -> str:
-    generated = await _MODEL.agenerate(
-        prompt=prompt,
-        params={"max_new_tokens": 40},
-    )
-    generated_stream = await _MODEL.agenerate_stream(
-        prompt="Stream an async Watsonx sentence.",
-        params={"max_new_tokens": 40},
-    )
-    generated_chunks = [stream_chunk_text(chunk) async for chunk in generated_stream]
-
-    chat = await _MODEL.achat(
-        messages=[{"role": "user", "content": "Give one async chat sentence."}],
-        params={"max_new_tokens": 40},
-    )
-    chat_stream = await _MODEL.achat_stream(
-        messages=[{"role": "user", "content": "Stream async chat."}],
-        params={"max_new_tokens": 40},
-    )
-    chat_chunks = [stream_chunk_text(chunk) async for chunk in chat_stream]
-
-    return (
-        f"agenerate={generated_text(generated)}\n"
-        f"agenerate_stream={''.join(generated_chunks)}\n"
-        f"achat={chat_text(chat)}\n"
-        f"achat_stream={''.join(chat_chunks)}"
-    )
-
-
-async def _run_async_model_calls(custom_identifier: str) -> str:
-    global _MODEL
-    model = make_model()
-    _MODEL = model
-    with example_attributes(EXAMPLE_NAME, custom_identifier):
+async def calls():
+    for method, payload, frames in [
+        ("agenerate", GEN, None),
+        ("achat", CHAT, None),
+        ("agenerate_stream", GEN, [GEN]),
+        ("achat_stream", CHAT, [CHAT]),
+    ]:
+        c, m, _e, _requests, _responses, _b, ab = native(payload, frames=frames)
         try:
-            return await _async_model_workflow(
-                "Reply asynchronously about Watsonx tracing."
+            r = (
+                await getattr(m, method)(messages=[] if "chat" in method else None)
+                if "chat" in method
+                else await getattr(m, method)(prompt="Controlled async.")
             )
+            if frames is not None:
+                assert [item async for item in r] == frames and ab.body.closed == 1
+            else:
+                assert r == payload
         finally:
-            close_provider(model)
+            await c.async_httpx_client.aclose()
+            close(c)
+    return "all four native async model methods"
 
 
-def run_async_model_calls() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    output = ""
-
-    try:
-        output = asyncio.run(_run_async_model_calls(custom_identifier))
-    finally:
-        respan.shutdown()
-
-    print_lookup(EXAMPLE_NAME, custom_identifier, output)
+def action(provider):
+    return asyncio.run(calls())
 
 
 if __name__ == "__main__":
-    run_async_model_calls()
+    run_case("watsonx_async_models", action)

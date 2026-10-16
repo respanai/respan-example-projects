@@ -1,37 +1,41 @@
+"""Controlled released Ragas APIs; provider calls are local unless explicitly exported."""
+
 from __future__ import annotations
 
+import os
+
+os.environ["RAGAS_DO_NOT_TRACK"] = "true"
+import asyncio
+
 import ragas
-from _shared import create_respan, example_context, finish_respan
+from _shared import run_case
 from ragas import EvaluationDataset
-from ragas.metrics import ExactMatch
-from respan import workflow
-
-CASE = "evaluate"
+from ragas.dataset_schema import EvaluationResult
+from ragas.metrics import ExactMatch as LegacyExactMatch
 
 
-@workflow(name="ragas_evaluate")
-def evaluation_workflow(question: str, answer: str) -> dict[str, object]:
+def action(provider, local):
     dataset = EvaluationDataset.from_list(
-        [{"user_input": question, "response": answer, "reference": "Paris"}]
+        [
+            {"response": "Paris", "reference": "Paris"},
+            {"response": "Rome", "reference": "Paris"},
+        ]
     )
-    result = ragas.evaluate(
-        dataset,
-        metrics=[ExactMatch()],
-        experiment_name="offline-exact-match",
-        show_progress=False,
+    sync = ragas.evaluate(dataset, metrics=[LegacyExactMatch()], show_progress=False)
+    asynchronous = asyncio.run(
+        ragas.aevaluate(dataset, metrics=[LegacyExactMatch()], show_progress=False)
     )
-    return {"exact_match": list(result["exact_match"])}
-
-
-def main() -> None:
-    respan = create_respan()
-    try:
-        with example_context(CASE):
-            result = evaluation_workflow("What is France's capital?", "Paris")
-            print(result, flush=True)
-    finally:
-        finish_respan(respan)
+    assert type(sync) is type(asynchronous) is EvaluationResult
+    assert (
+        sync.scores
+        == asynchronous.scores
+        == [{"exact_match": 1.0}, {"exact_match": 0.0}]
+    )
+    assert len(sync.dataset) == 2
+    return (
+        "native typed evaluate/aevaluate results and connected legacy metric children"
+    )
 
 
 if __name__ == "__main__":
-    main()
+    run_case("ragas_evaluations", action)

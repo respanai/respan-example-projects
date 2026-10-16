@@ -1,62 +1,68 @@
-from __future__ import annotations
-
-from _shared import (
-    close_provider,
-    example_attributes,
-    make_custom_identifier,
-    make_model,
-    make_respan,
-    print_lookup,
-    stream_chunk_text,
-    workflow_name,
-)
-from respan import workflow
-
-EXAMPLE_NAME = "streaming"
-_MODEL = None
+from _shared import GEN, close, native, run_case
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _streaming_workflow(text_prompt: str, chat_prompt: str) -> str:
-    text_chunks = [
-        stream_chunk_text(chunk)
-        for chunk in _MODEL.generate_text_stream(
-            prompt=text_prompt,
-            params={"max_new_tokens": 40},
-        )
+def action(provider):
+    frames = [
+        {
+            "model_id": "reported-granite",
+            "results": [
+                {
+                    "generated_text": str(n) + " ",
+                    "input_token_count": 0,
+                    "generated_token_count": 0,
+                }
+            ],
+        }
+        for n in range(300)
     ]
-    chat_chunks = [
-        stream_chunk_text(chunk)
-        for chunk in _MODEL.chat_stream(
-            messages=[{"role": "user", "content": chat_prompt}],
-            params={"max_new_tokens": 40},
-        )
-    ]
-    return f"text_stream={''.join(text_chunks)}\nchat_stream={''.join(chat_chunks)}"
-
-
-def run_streaming() -> None:
-    global _MODEL
-    model = make_model()
-    _MODEL = model
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    output = ""
-
+    c, m, _e, requests, _responses, body, *_ = native(frames=frames)
     try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            output = _streaming_workflow(
-                "Stream a short sentence about production traces.",
-                "Stream a tiny Watsonx chat reply.",
-            )
+        s = m.generate_text_stream(prompt="Controlled full stream.")
+        assert not requests and not body.reads
+        assert len(list(s)) == 300 and body.closed == 1
     finally:
-        try:
-            close_provider(model)
-        finally:
-            respan.shutdown()
-
-    print_lookup(EXAMPLE_NAME, custom_identifier, output)
+        close(c)
+    pieces = [
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-stream",
+                                "type": "function",
+                                "function": {"name": "get_weather", "arguments": piece},
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+        for piece in ('{"city":', '"Tokyo"}')
+    ]
+    c, m, _e, requests, _responses, body, *_ = native(frames=pieces)
+    try:
+        assert list(m.chat_stream(messages=[])) == pieces and body.closed == 1
+    finally:
+        close(c)
+    c, m, _e, requests, _responses, body, *_ = native(frames=[GEN, GEN])
+    try:
+        s = m.generate_text_stream(
+            prompt="Controlled partial stream.", raw_response=True
+        )
+        assert next(s) == GEN
+        s.close()
+        assert body.closed == 1
+        s = m.generate_text_stream(prompt="Controlled unopened stream.")
+        s.close()
+        assert len(requests) == 1
+    finally:
+        close(c)
+    return "300 native SSE frames, fragmented tool calls, partial and unopened close"
 
 
 if __name__ == "__main__":
-    run_streaming()
+    run_case("watsonx_streams", action)
