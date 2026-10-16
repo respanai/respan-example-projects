@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from google.genai import types
-
-from respan import tool, workflow
-
 from _shared import (
     example_attributes,
     make_client,
@@ -13,6 +9,8 @@ from _shared import (
     print_result,
     workflow_name,
 )
+from google.genai import types
+from respan import tool, workflow
 
 EXAMPLE_NAME = "tool-calling"
 

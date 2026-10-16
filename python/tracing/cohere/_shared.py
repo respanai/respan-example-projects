@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import Callable, Iterator
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import cohere
+import httpx
 from cohere.client_v2 import ClientV2
 from dotenv import load_dotenv
 from respan import Respan
@@ -24,7 +26,7 @@ RERANK_MODEL = os.getenv("COHERE_RERANK_MODEL", "rerank-v3.5")
 
 def _example_run_id() -> str:
     configured = os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip()
-    if configured and "".join(("co", "dex")) not in configured.lower():
+    if configured:
         return configured
     return f"cohere-{int(time.time())}"
 
@@ -32,7 +34,6 @@ def _example_run_id() -> str:
 RUN_ID = _example_run_id()
 
 T = TypeVar("T")
-_STUBS_INSTALLED = False
 
 
 class AttrDict(dict):
@@ -134,7 +135,7 @@ def _fake_chat_stream(self: ClientV2, *args: Any, **kwargs: Any) -> Iterator[Att
 
 def _fake_embed(self: ClientV2, *args: Any, **kwargs: Any) -> AttrDict:
     _ = self, args
-    texts = kwargs.get("texts") or []
+    texts = kwargs.get("texts") or kwargs.get("images") or kwargs.get("inputs") or []
     vectors = [[0.01, 0.02, 0.03] for _item in texts]
     return _attr_dict(
         {
@@ -166,19 +167,37 @@ def _fake_rerank(self: ClientV2, *args: Any, **kwargs: Any) -> AttrDict:
 
 
 def install_cohere_stubs_if_needed() -> bool:
-    global _STUBS_INSTALLED
+    """Retain the example entry point; fixtures now use the real SDK transport."""
+    return _use_stubs()
 
-    if not _use_stubs():
-        return False
-    if _STUBS_INSTALLED:
-        return True
 
-    ClientV2.chat = _fake_chat
-    ClientV2.chat_stream = _fake_chat_stream
-    ClientV2.embed = _fake_embed
-    ClientV2.rerank = _fake_rerank
-    _STUBS_INSTALLED = True
-    return True
+def fixture_response(request: httpx.Request) -> httpx.Response:
+    payload = json.loads(request.content)
+    if request.url.path.endswith("/embed"):
+        response = _fake_embed(None, **payload)
+        response["embeddings"] = {"float": response["embeddings"]["float_"]}
+        response["response_type"] = "embeddings_by_type"
+        return httpx.Response(200, json=response)
+    if request.url.path.endswith("/rerank"):
+        return httpx.Response(200, json=_fake_rerank(None, **payload))
+    if payload.get("stream"):
+        events = _fake_chat_stream(None, **payload)
+        body = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+        return httpx.Response(
+            200, content=body, headers={"content-type": "text/event-stream"}
+        )
+    if payload.get("messages", [{}])[0].get("content") == "expected failure":
+        return httpx.Response(400, json={"message": "Expected fixture failure"})
+    response = _fake_chat(None, **payload)
+    if payload.get("tools"):
+        response["message"]["tool_calls"] = [
+            {
+                "id": "weather-1",
+                "type": "function",
+                "function": {"name": "weather", "arguments": '{"city":"Paris"}'},
+            }
+        ]
+    return httpx.Response(200, json=response)
 
 
 def create_respan(app_name: str) -> Respan:
@@ -188,14 +207,19 @@ def create_respan(app_name: str) -> Respan:
         app_name=app_name,
         instrumentations=[CohereInstrumentor()],
         is_batching_enabled=False,
-        metadata={"example_set": "cohere", "example_run_id": RUN_ID},
+        metadata={"example_set": "cohere", "example_run_id": RUN_ID, "run_id": RUN_ID},
         environment=os.getenv("RESPAN_ENVIRONMENT", "examples"),
     )
 
 
 def create_cohere_client() -> cohere.ClientV2:
     api_key = _cohere_api_key() or "stubbed-cohere-key"
-    return cohere.ClientV2(api_key=api_key)
+    kwargs = {}
+    if _use_stubs():
+        kwargs["httpx_client"] = httpx.Client(
+            transport=httpx.MockTransport(fixture_response)
+        )
+    return cohere.ClientV2(api_key=api_key, **kwargs)
 
 
 def run_with_example_attributes(
@@ -210,6 +234,7 @@ def run_with_example_attributes(
         metadata={
             "example": "cohere",
             "example_run_id": RUN_ID,
+            "run_id": RUN_ID,
             "workflow_name": workflow_name,
             "cohere_stubbed": _use_stubs(),
         },

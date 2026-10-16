@@ -16,7 +16,7 @@ DEFAULT_MODEL = "gemini-3-flash-preview"
 
 
 def load_root_env() -> None:
-    load_dotenv(PROJECT_ROOT / ".env", override=True)
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
 def require_respan_api_key() -> str:
@@ -64,6 +64,10 @@ def google_api_key() -> str | None:
 
 
 def make_client() -> genai.Client:
+    if os.getenv("RESPAN_GOOGLE_GENAI_MODE") == "fixture":
+        from _fixtures import make_fixture_client
+
+        return make_fixture_client()
     direct_api_key = google_api_key()
     if direct_api_key:
         return genai.Client(api_key=direct_api_key)
@@ -106,6 +110,8 @@ def example_attributes(example_name: str, custom_identifier: str | None = None):
 
 
 def client_mode() -> str:
+    if os.getenv("RESPAN_GOOGLE_GENAI_MODE") == "fixture":
+        return "deterministic-sdk-http-fixture"
     return "direct-google" if google_api_key() else "respan-gateway"
 
 

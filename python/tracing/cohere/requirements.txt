@@ -1,0 +1,5 @@
+cohere>=7.2.0,<8
+httpx>=0.28,<1
+python-dotenv>=1
+respan-ai>=4.2.3
+respan-instrumentation-cohere>=0.1.0

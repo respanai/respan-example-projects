@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import httpx
 from _shared import (
     example_attributes,
     finish_respan,
+    httpx,
     make_custom_identifier,
     make_mock_sync_client,
     make_respan,

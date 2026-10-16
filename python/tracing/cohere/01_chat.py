@@ -1,5 +1,3 @@
-from respan import workflow
-
 from _shared import (
     CHAT_MODEL,
     create_cohere_client,
@@ -7,6 +5,7 @@ from _shared import (
     install_cohere_stubs_if_needed,
     run_with_example_attributes,
 )
+from respan import workflow
 
 WORKFLOW_NAME = "cohere_chat.workflow"
 
