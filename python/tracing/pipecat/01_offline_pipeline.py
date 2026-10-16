@@ -1,51 +1,29 @@
-"""Run a deterministic current-Pipecat pipeline and export Respan spans."""
-
-from __future__ import annotations
-
 import asyncio
-from pathlib import Path
 
-from _pipeline import OfflineLLMService, run_pipeline
-from _shared import (
-    create_respan,
-    execution_id,
-    finish_respan,
-    marker,
-    print_result,
-    workflow_attributes,
-)
-from respan import Respan, workflow
-
-SCRIPT_NAME = Path(__file__).name
-WORKFLOW_NAME = "pipecat_offline_pipeline"
+from _pipeline import run
+from _shared import attributes, create_respan, finish_respan, marker, print_result
+from respan import workflow
 
 
-async def main() -> None:
-    run_marker = marker()
-    execution = execution_id()
-    respan = create_respan(WORKFLOW_NAME, run_marker)
+async def main():
+    run_id = marker()
+    sdk = create_respan("native-pipeline", run_id)
+
+    @workflow(name="pipecat_native_pipeline")
+    async def scenario(prompt):
+        collector, _worker = await run(messages=[{"role": "user", "content": prompt}])
+        return {
+            "text": "".join(
+                f.text for f in collector.frames if type(f).__name__ == "LLMTextFrame"
+            )
+        }
+
     try:
-
-        @workflow(name=WORKFLOW_NAME)
-        async def trace_pipeline(prompt: str) -> dict[str, str]:
-            result = await run_pipeline(
-                OfflineLLMService(response="Pipecat instrumentation is active."),
-                prompt=prompt,
-                conversation_id=f"offline-{execution}",
-            )
-            return {"response": result.text, "status": "completed"}
-
-        with Respan.propagate_attributes(
-            **workflow_attributes(
-                WORKFLOW_NAME, run_marker, execution, mode="deterministic"
-            )
-        ):
-            result = await trace_pipeline(
-                "Confirm that the Pipecat pipeline is traced."
-            )
-        print_result(SCRIPT_NAME, result, run_marker)
+        with attributes("native-pipeline", run_id):
+            result = await scenario("Trace the native Pipecat frame pipeline.")
+        print_result("native-pipeline", result, run_id)
     finally:
-        finish_respan(respan)
+        finish_respan(sdk)
 
 
 if __name__ == "__main__":

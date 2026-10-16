@@ -1,7 +1,6 @@
 python-dotenv>=1.0.1
-livekit-agents>=1.6.0
-livekit-plugins-openai>=1.6.0
--e ../../../../respan/python-sdks/respan-sdk
--e ../../../../respan/python-sdks/respan-tracing
--e ../../../../respan/python-sdks/respan
--e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-livekit
+httpx>=0.27
+livekit-agents>=1.6.0,<2
+livekit-plugins-openai>=1.6.0,<2
+respan-tracing>=2.17.0,<3
+respan-instrumentation-livekit>=0.1.2

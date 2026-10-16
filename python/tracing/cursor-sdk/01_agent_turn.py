@@ -43,6 +43,7 @@ def main() -> None:
             text="Implemented the email helper and kept the validation logic compact.",
         ),
     ]
+    events.append(make_event(EXAMPLE_NAME, run_id, "stop", status="completed"))
     replay_events(EXAMPLE_NAME, events, run_id=run_id)
 
 

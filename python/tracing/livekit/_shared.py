@@ -1,314 +1,350 @@
+"""Controlled real SDK fixtures, local spans by default, explicit export opt-in."""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
 
+import httpx
 from dotenv import load_dotenv
-from livekit.agents import function_tool, llm
-from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN
-from respan import Respan, propagate_attributes
+from livekit.agents import function_tool, llm, telemetry
+from livekit.agents.types import APIConnectOptions
+from livekit.plugins import openai as plugin
+from openai import AsyncOpenAI
+from opentelemetry import trace
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan_instrumentation_livekit import LiveKitInstrumentor
+from respan_sdk.constants.span_attributes import RESPAN_METADATA
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
-_RUN_ID: str | None = None
-
-
-def load_root_env() -> None:
-    load_dotenv(PROJECT_ROOT / ".env", override=True)
-
-
-def require_respan_api_key() -> str:
-    load_root_env()
-    api_key = os.getenv("RESPAN_API_KEY")
-    if not api_key:
-        raise RuntimeError("RESPAN_API_KEY must be set in the repo root .env file")
-    return api_key
-
-
-def respan_base_url() -> str:
-    return os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL).rstrip("/")
-
-
-def example_run_id() -> str:
-    global _RUN_ID
-
-    if _RUN_ID is None:
-        load_root_env()
-        _RUN_ID = os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip()
-        if not _RUN_ID:
-            _RUN_ID = f"livekit-{uuid4().hex[:8]}"
-    return _RUN_ID
-
-
-def workflow_name(example_name: str) -> str:
-    return f"livekit_{example_name.replace('-', '_')}"
-
-
-def make_custom_identifier(example_name: str) -> str:
-    return f"{example_run_id()}:{example_name}"
-
-
-def make_respan(example_name: str, *, client_mode: str = "mock-livekit") -> Respan:
-    return Respan(
-        api_key=require_respan_api_key(),
-        base_url=respan_base_url(),
-        app_name="livekit-examples",
-        instrumentations=[LiveKitInstrumentor()],
-        environment=os.getenv("RESPAN_ENVIRONMENT", "example"),
-        metadata={
-            "integration": "livekit",
-            "example": example_name,
-            "example_run_id": example_run_id(),
-            "client_mode": client_mode,
-        },
+EXAMPLE_DIR = Path(__file__).resolve().parent
+EXPORT = os.getenv("RESPAN_EXPORT", "0") == "1"
+if EXPORT or os.getenv("RESPAN_LIVEKIT_LIVE", "0") == "1":
+    load_dotenv(
+        Path(os.getenv("RESPAN_ENV_FILE", str(EXAMPLE_DIR.parents[2] / ".env"))),
+        override=False,
     )
+RUN_ID = os.getenv("RESPAN_EXAMPLE_RUN_ID") or "livekit-" + uuid.uuid4().hex[:12]
 
 
-def example_attributes(
-    example_name: str,
-    custom_identifier: str | None = None,
-    *,
-    client_mode: str = "mock-livekit",
-):
-    custom_identifier = custom_identifier or make_custom_identifier(example_name)
-    current_workflow_name = workflow_name(example_name)
-    return propagate_attributes(
-        custom_identifier=custom_identifier,
-        trace_group_identifier=current_workflow_name,
-        metadata={
-            "example": example_name,
-            "example_run_id": example_run_id(),
+def example_run_id():
+    if (
+        RUN_ID != RUN_ID.strip()
+        or any(c in RUN_ID for c in "\r\n")
+        or len(RUN_ID.encode()) > 160
+    ):
+        raise ValueError(
+            "Exact marker must be at most160 bytes without whitespace/newlines"
+        )
+    return RUN_ID
+
+
+class Marker(SpanProcessor):
+    def __init__(self, scenario):
+        self.metadata = {
             "run_id": example_run_id(),
-            "workflow_name": current_workflow_name,
-            "client_mode": client_mode,
-        },
-    )
+            "example_run_id": example_run_id(),
+            "framework": "livekit",
+            "scenario": scenario,
+            "example": scenario,
+            "example_set": "python/tracing/livekit",
+        }
+
+    def on_start(self, span, parent_context=None):
+        span.set_attribute(RESPAN_METADATA, json.dumps(self.metadata))
+        for k, v in self.metadata.items():
+            span.set_attribute(RESPAN_METADATA + "." + k, v)
+
+    def on_end(self, span):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def force_flush(self, timeout_millis=30000):
+        return True
 
 
-def print_start(
-    example_name: str,
-    custom_identifier: str,
-    *,
-    client_mode: str = "mock-livekit",
-) -> None:
-    print(f"example={example_name}", flush=True)
-    print(f"example_run_id={example_run_id()}", flush=True)
-    print(f"custom_identifier={custom_identifier}", flush=True)
-    print(f"workflow_name={workflow_name(example_name)}", flush=True)
-    print(f"client_mode={client_mode}", flush=True)
+class Tracing:
+    def __init__(self, scenario, *, capture_content=True):
+        if EXPORT:
+            from respan_tracing import RespanTelemetry
 
-
-def live_openai_settings() -> tuple[str, str, str]:
-    load_root_env()
-    api_key = os.getenv("RESPAN_GATEWAY_API_KEY") or os.getenv("RESPAN_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "RESPAN_GATEWAY_API_KEY or RESPAN_API_KEY is required for the live example"
-        )
-    base_url = (
-        os.getenv("RESPAN_GATEWAY_BASE_URL")
-        or os.getenv("RESPAN_BASE_URL")
-        or DEFAULT_RESPAN_BASE_URL
-    ).rstrip("/")
-    model = os.getenv("RESPAN_LIVEKIT_MODEL") or os.getenv(
-        "RESPAN_MODEL", "gpt-4o-mini"
-    )
-    return api_key, base_url, model
-
-
-def print_result(label: str, value: Any) -> None:
-    print(f"\n== {label} ==")
-    if isinstance(value, str):
-        print(value.strip())
-        return
-    print(json.dumps(value, default=str, indent=2, sort_keys=True))
-
-
-def finish_respan(respan: Respan) -> None:
-    shutdown = getattr(respan, "shutdown", None)
-    if shutdown is not None:
-        shutdown()
-
-
-class MockLiveKitLLM(llm.LLM):
-    def __init__(self, *, model: str = "gpt-4o-mini", provider: str = "openai") -> None:
-        super().__init__()
-        self._model = model
-        self._provider = provider
-
-    @property
-    def model(self) -> str:
-        return self._model
-
-    @property
-    def provider(self) -> str:
-        return self._provider
-
-    def chat(
-        self,
-        *,
-        chat_ctx: llm.ChatContext,
-        tools: list[llm.Tool] | None = None,
-        conn_options=DEFAULT_API_CONNECT_OPTIONS,
-        parallel_tool_calls=NOT_GIVEN,
-        tool_choice=NOT_GIVEN,
-        extra_kwargs=NOT_GIVEN,
-    ) -> llm.LLMStream:
-        scenario = "chat"
-        if isinstance(extra_kwargs, dict):
-            scenario = str(extra_kwargs.get("scenario", scenario))
-        return MockLiveKitLLMStream(
-            self,
-            chat_ctx=chat_ctx,
-            tools=tools or [],
-            conn_options=conn_options,
-            scenario=scenario,
-        )
-
-    async def aclose(self) -> None:
-        return None
-
-
-class MockLiveKitLLMStream(llm.LLMStream):
-    def __init__(
-        self,
-        livekit_llm: MockLiveKitLLM,
-        *,
-        chat_ctx: llm.ChatContext,
-        tools: list[llm.Tool],
-        conn_options,
-        scenario: str,
-    ) -> None:
-        self._scenario = scenario
-        super().__init__(
-            livekit_llm,
-            chat_ctx=chat_ctx,
-            tools=tools,
-            conn_options=conn_options,
-        )
-
-    async def _run(self) -> None:
-        await asyncio.sleep(0)
-        if self._scenario == "stream":
-            await self._send_text_chunks(
-                request_id="mock-stream",
-                chunks=["LiveKit ", "streaming ", "works."],
-                prompt_tokens=11,
-                completion_tokens=6,
+            RespanTelemetry(
+                app_name="livekit-" + scenario,
+                api_key=os.environ["RESPAN_API_KEY"],
+                base_url=os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
+                is_auto_instrument=False,
+                is_batching_enabled=False,
             )
-            return
+            self.provider = trace.get_tracer_provider()
+        else:
+            self.provider = TracerProvider()
+            trace.set_tracer_provider(self.provider)
+        self.exporter = InMemorySpanExporter()
+        self.provider.add_span_processor(Marker(scenario))
+        self.provider.add_span_processor(SimpleSpanProcessor(self.exporter))
+        self.owner = LiveKitInstrumentor(capture_content=capture_content)
+        self.owner.activate()
 
-        if self._scenario == "tool":
-            await self._send_tool_call(
-                name="lookup_room_status",
-                arguments='{"room":"blue"}',
-                call_id="call_livekit_blue_room",
-                content="I will look up the room status.",
-                prompt_tokens=14,
-                completion_tokens=5,
-            )
-            return
-
-        if self._scenario == "missing_tool":
-            await self._send_tool_call(
-                name="missing_tool",
-                arguments='{"value":1}',
-                call_id="call_missing_tool",
-                content="I will call a missing tool to demonstrate error tracing.",
-                prompt_tokens=12,
-                completion_tokens=9,
-            )
-            return
-
-        await self._send_text_chunks(
-            request_id="mock-chat",
-            chunks=["LiveKit mock response from a Respan traced LLM."],
-            prompt_tokens=9,
-            completion_tokens=8,
-        )
-
-    async def _send_text_chunks(
-        self,
-        *,
-        request_id: str,
-        chunks: list[str],
-        prompt_tokens: int,
-        completion_tokens: int,
-    ) -> None:
-        for content in chunks:
-            self._event_ch.send_nowait(
-                llm.ChatChunk(
-                    id=request_id,
-                    delta=llm.ChoiceDelta(role="assistant", content=content),
+    def finish(self):
+        self.provider.force_flush()
+        self.owner.deactivate()
+        spans = self.exporter.get_finished_spans()
+        print("LOCAL_TRACE_COUNT=" + str(len(spans)))
+        directory = os.getenv("LIVEKIT_CAPTURE_DIR")
+        if directory:
+            path = Path(directory)
+            path.mkdir(parents=True, exist_ok=True)
+            path.joinpath(f"{RUN_ID}-{os.getpid()}.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "name": s.name,
+                            "span_id": f"{s.context.span_id:016x}",
+                            "trace_id": f"{s.context.trace_id:032x}",
+                            "parent_id": f"{s.parent.span_id:016x}"
+                            if s.parent
+                            else None,
+                            "status": s.status.status_code.name,
+                            "attributes": dict(s.attributes),
+                            "events": [
+                                {"name": e.name, "attributes": dict(e.attributes)}
+                                for e in s.events
+                            ],
+                        }
+                        for s in spans
+                    ],
+                    indent=2,
                 )
             )
-            await asyncio.sleep(0)
-        self._event_ch.send_nowait(
-            llm.ChatChunk(
-                id=request_id,
-                usage=llm.CompletionUsage(
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=prompt_tokens + completion_tokens,
-                    prompt_cached_tokens=2,
-                ),
-            )
-        )
+        self.provider.shutdown()
 
-    async def _send_tool_call(
-        self,
-        *,
-        name: str,
-        arguments: str,
-        call_id: str,
-        content: str,
-        prompt_tokens: int,
-        completion_tokens: int,
-    ) -> None:
-        tool_call = llm.FunctionToolCall(
-            name=name,
-            arguments=arguments,
-            call_id=call_id,
-        )
-        self._event_ch.send_nowait(
-            llm.ChatChunk(
-                id="mock-tool",
-                delta=llm.ChoiceDelta(
-                    role="assistant",
-                    content=content,
-                    tool_calls=[tool_call],
-                ),
+
+@contextmanager
+def native_job():
+    with telemetry.tracer.start_as_current_span("job_entrypoint") as span:
+        yield span
+
+
+def chat_context(history=False):
+    ctx = llm.ChatContext.empty()
+    ctx.add_message(role="system", content="Controlled native SDK instructions")
+    if history:
+        ctx.insert(
+            llm.FunctionCall(
+                call_id="history-only", name="previous", arguments='{"x":1}'
             )
         )
-        await asyncio.sleep(0)
-        self._event_ch.send_nowait(
-            llm.ChatChunk(
-                id="mock-tool",
-                usage=llm.CompletionUsage(
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=prompt_tokens + completion_tokens,
-                ),
+        ctx.insert(
+            llm.FunctionCallOutput(
+                call_id="history-only",
+                name="previous",
+                output=json.dumps({"vector": list(range(5000))}),
+                is_error=False,
             )
         )
+    ctx.add_message(role="user", content="controlled input")
+    return ctx
+
+
+SCHEMA = {
+    "name": "vector_tool",
+    "description": "Controlled native vector tool",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "dense": {"type": "array", "items": {"type": "integer"}},
+            "sparse": {"type": "object"},
+            "api_key": {
+                "type": "string",
+                "default": "PRIVATE_CREDENTIAL",
+                "examples": ["PRIVATE_EXAMPLE"],
+            },
+            **{f"field{i}": {"type": "integer"} for i in range(120)},
+        },
+    },
+}
+
+
+@function_tool(raw_schema=SCHEMA)
+async def vector_tool(raw_arguments: dict[str, object]):
+    return {"dense": raw_arguments["dense"], "sparse": raw_arguments["sparse"]}
 
 
 @function_tool
 async def lookup_room_status(room: str) -> str:
-    """Return the occupancy status for a LiveKit room."""
-    return f"Room {room} is online with two participants"
+    return f"Room {room} has two participants"
 
 
-def chat_context(prompt: str) -> llm.ChatContext:
-    ctx = llm.ChatContext.empty()
-    ctx.add_message(
-        role="system",
-        content="You are a concise LiveKit assistant used for tracing examples.",
+class FixtureLLM(llm.LLM):
+    def __init__(
+        self, *, scenario="text", usage=True, pause=None, finish=None, boundary=None
+    ):
+        super().__init__()
+        self.scenario = scenario
+        self.usage = usage
+        self.pause = pause
+        self.finish = finish
+        self.boundary = boundary
+
+    @property
+    def model(self):
+        return "fixture-model"
+
+    @property
+    def provider(self):
+        return "openai"
+
+    def chat(self, *, chat_ctx, tools=None, conn_options=None, **kwargs):
+        return FixtureStream(
+            self,
+            chat_ctx=chat_ctx,
+            tools=tools or [],
+            conn_options=conn_options or APIConnectOptions(max_retry=0),
+        )
+
+    async def aclose(self):
+        pass
+
+
+class FixtureStream(llm.LLMStream):
+    async def _run(self):
+        if self._llm.pause:
+            await self._llm.pause.wait()
+        if self._llm.boundary:
+            self._llm.boundary()
+        if self._llm.scenario == "tools":
+            calls = [
+                llm.FunctionToolCall(
+                    name="vector_tool",
+                    arguments=json.dumps(
+                        {
+                            "dense": list(range(5000)),
+                            "sparse": {j * 2: j / 256 for j in range(256)},
+                            "api_key": "PRIVATE_CREDENTIAL",
+                            "content": 'Bearer synthetic-token"quoted" value',
+                        }
+                    ),
+                    call_id=f"actual-vector-{i}",
+                )
+                for i in range(2)
+            ]
+            self._event_ch.send_nowait(
+                llm.ChatChunk(
+                    id="actual",
+                    delta=llm.ChoiceDelta(role="assistant", tool_calls=calls),
+                )
+            )
+        else:
+            for word in ["native ", "LiveKit ", "output"]:
+                self._event_ch.send_nowait(
+                    llm.ChatChunk(
+                        id="actual",
+                        delta=llm.ChoiceDelta(role="assistant", content=word),
+                    )
+                )
+                await asyncio.sleep(0)
+        if self._llm.finish:
+            await self._llm.finish.wait()
+        if self._llm.usage:
+            values = {
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "total_tokens": 18,
+                "prompt_cached_tokens": 3,
+            }
+            if "reasoning_tokens" in llm.CompletionUsage.model_fields:
+                values["reasoning_tokens"] = 2
+            if "cache_creation_tokens" in llm.CompletionUsage.model_fields:
+                values["cache_creation_tokens"] = 4
+            self._event_ch.send_nowait(
+                llm.ChatChunk(id="actual", usage=llm.CompletionUsage(**values))
+            )
+
+
+def provider_model(*, usage=True, error=False, live=False):
+    if live:
+        client = AsyncOpenAI(
+            api_key=os.environ["OPENAI_API_KEY"],
+            base_url=os.getenv("OPENAI_BASE_URL"),
+            max_retries=0,
+        )
+        return plugin.LLM(
+            model=os.getenv("RESPAN_LIVEKIT_MODEL", "gpt-4.1-mini"), client=client
+        ), client
+
+    def boundary(request):
+        if error:
+            return httpx.Response(
+                429,
+                json={
+                    "error": {
+                        "message": "controlled provider failure",
+                        "type": "rate_limit_error",
+                    }
+                },
+            )
+        frames = [
+            {
+                "id": "actual-openai",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "fixture-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant",
+                            "content": "actual provider fixture",
+                        },
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {
+                "id": "actual-openai",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "fixture-model",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            },
+        ]
+        if usage is not False:
+            counts = {
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "total_tokens": 18,
+                "prompt_tokens_details": {"cached_tokens": 3},
+                "completion_tokens_details": {"reasoning_tokens": 2},
+            }
+            if isinstance(usage, dict):
+                counts = usage
+            frames.append(
+                {
+                    "id": "actual-openai",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "fixture-model",
+                    "choices": [],
+                    "usage": counts,
+                }
+            )
+        return httpx.Response(
+            200,
+            content="".join("data: " + json.dumps(f) + "\n\n" for f in frames)
+            + "data: [DONE]\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client = AsyncOpenAI(
+        api_key="synthetic",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(boundary)),
     )
-    ctx.add_message(role="user", content=prompt)
-    return ctx
+    return plugin.LLM(model="fixture-model", client=client), client

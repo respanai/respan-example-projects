@@ -1,52 +1,39 @@
-from __future__ import annotations
+"""Native returned tool error and actual HTTP429; no invented output/status."""
 
 import asyncio
 
+from _shared import APIConnectOptions, Tracing, chat_context, native_job, provider_model
 from livekit.agents import llm
-
-from _shared import (
-    MockLiveKitLLM,
-    chat_context,
-    example_attributes,
-    finish_respan,
-    make_custom_identifier,
-    make_respan,
-    print_result,
-    print_start,
-)
+from livekit.agents._exceptions import APIStatusError
 
 
-async def main() -> None:
-    example_name = "04-context-and-error"
-    custom_identifier = make_custom_identifier(example_name)
-    respan = make_respan(example_name)
+async def main():
+    tracing = Tracing("expected-errors")
+    model, client = provider_model(error=True)
     try:
-        print_start(example_name, custom_identifier)
-        model = MockLiveKitLLM()
-        with example_attributes(example_name, custom_identifier):
-            response = await model.chat(
-                chat_ctx=chat_context("Demonstrate propagated attributes."),
-                extra_kwargs={"scenario": "missing_tool"},
-            ).collect()
-            missing_result = await llm.execute_function_call(
-                response.tool_calls[0],
-                llm.ToolContext.empty(),
+        with native_job():
+            result = await llm.execute_function_call(
+                llm.FunctionToolCall(
+                    name="missing_tool", call_id="actual-error", arguments="{}"
+                ),
+                llm.ToolContext([]),
             )
-        print_result("response", response.model_dump())
-        print_result(
-            "missing_tool",
-            {
-                "name": missing_result.fnc_call.name,
-                "output": missing_result.fnc_call_out.output
-                if missing_result.fnc_call_out
-                else None,
-                "is_error": missing_result.fnc_call_out.is_error
-                if missing_result.fnc_call_out
-                else None,
-            },
-        )
+            assert result.fnc_call_out.is_error and isinstance(
+                result.raw_exception, ValueError
+            )
+            try:
+                await model.chat(
+                    chat_ctx=chat_context(), conn_options=APIConnectOptions(max_retry=0)
+                ).collect()
+            except APIStatusError as error:
+                assert error.status_code == 429
+            else:
+                raise AssertionError("native SDK error missing")
+        print("native error result and HTTP429 preserved")
     finally:
-        finish_respan(respan)
+        await client.close()
+        await model.aclose()
+        tracing.finish()
 
 
 if __name__ == "__main__":

@@ -1,14 +1,16 @@
-"""Current Pipecat worker fixtures shared by the runnable examples."""
-
-from __future__ import annotations
+"""Released Pipecat pipeline/observer fixtures; no SDK methods are replaced."""
 
 import asyncio
-from dataclasses import dataclass
 
+from openai import _exceptions
+
+httpx = getattr(_exceptions, "httpx", None) or _exceptions.httpx2
+from openai import AuthenticationError
 from pipecat.frames.frames import (
+    CancelFrame,
     EndFrame,
     ErrorFrame,
-    Frame,
+    FunctionCallFromLLM,
     LLMContextFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -16,115 +18,188 @@ from pipecat.frames.frames import (
 )
 from pipecat.metrics.metrics import LLMTokenUsage
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.services.llm_service import LLMService, LLMSettings
-from pipecat.workers.runner import WorkerRunner
+
+try:
+    from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+    from pipecat.workers.runner import WorkerRunner
+
+    CURRENT = True
+except ImportError:
+    from pipecat.pipeline.runner import PipelineRunner as WorkerRunner
+    from pipecat.pipeline.task import PipelineParams
+    from pipecat.pipeline.task import PipelineTask as PipelineWorker
+
+    CURRENT = False
 
 
-class ProviderHTTPError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class OfflineLLMService(LLMService):
-    def __init__(self, *, response: str, fail_status: int | None = None) -> None:
+class Service(LLMService):
+    def __init__(
+        self,
+        *,
+        fail=False,
+        tool=False,
+        veto=None,
+        tool_args=None,
+        cancel=False,
+        partial=False,
+    ):
         super().__init__(
-            name="OfflineLLMService",
+            name="FixtureLLM",
             settings=LLMSettings(
-                model="offline-pipecat-demo",
-                system_instruction=None,
-                temperature=None,
-                max_tokens=None,
-                top_p=None,
-                top_k=None,
-                frequency_penalty=None,
-                presence_penalty=None,
-                seed=None,
-                filter_incomplete_user_turns=False,
-                user_turn_completion_config=None,
+                **{
+                    f.name: (
+                        "fixture-pipecat"
+                        if f.name == "model"
+                        else {}
+                        if f.name == "extra"
+                        else None
+                    )
+                    for f in __import__("dataclasses").fields(LLMSettings)
+                }
             ),
         )
-        self._response = response
-        self._fail_status = fail_status
+        self.tool_args = tool_args
+        self.partial = partial
+        self.cancel = cancel
+        self.fail = fail
+        self.tool = tool
+        self.veto = veto
+        self._tool_done = asyncio.Event()
+        if tool:
+            self.register_function("vector_tool", self._vector_handler)
 
-    def can_generate_metrics(self) -> bool:
+    async def _vector_handler(self, params):
+        await params.result_callback(
+            {
+                "dense": [i / 5000 for i in range(5000)],
+                "sparse": {i: float(i) for i in range(256)},
+            }
+        )
+        self._tool_done.set()
+
+    def can_generate_metrics(self):
         return True
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+    async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
         if not isinstance(frame, LLMContextFrame):
-            await self.push_frame(frame, direction)
-            return
+            return await self.push_frame(frame, direction)
         await self.push_frame(LLMFullResponseStartFrame())
-        if self._fail_status is not None:
-            error = ProviderHTTPError(
-                "deterministic provider authorization failure",
-                status_code=self._fail_status,
+        if self.veto:
+            self.veto()
+        if self.fail:
+            if self.partial:
+                await self.push_frame(LLMTextFrame("Actual partial text."))
+            request = httpx.Request("POST", "https://provider.test/chat")
+            response = httpx.Response(
+                401,
+                request=request,
+                json={"error": {"message": "Controlled authorization failure."}},
             )
-            await self.push_frame(
+            exception = AuthenticationError(
+                "Controlled authorization failure.",
+                response=response,
+                body={"message": "Controlled authorization failure."},
+            )
+            return await self.push_frame(
                 ErrorFrame(
-                    error="deterministic provider authorization failure",
-                    exception=error,
+                    error="Controlled authorization failure.",
+                    exception=exception,
                     processor=self,
                 )
             )
+        await self.push_frame(LLMTextFrame("Actual native text."))
+        if self.cancel:
             return
-        await self.push_frame(LLMTextFrame(self._response))
+        if self.tool:
+            await self.run_function_calls(
+                [
+                    FunctionCallFromLLM(
+                        function_name="vector_tool",
+                        tool_call_id="current-call",
+                        arguments=self.tool_args or {"values": list(range(120))},
+                        context=frame.context,
+                    )
+                ]
+            )
+            await asyncio.wait_for(self._tool_done.wait(), 5)
         await self.start_llm_usage_metrics(
-            LLMTokenUsage(prompt_tokens=8, completion_tokens=6, total_tokens=14)
+            LLMTokenUsage(
+                prompt_tokens=11,
+                completion_tokens=7,
+                total_tokens=23,
+                cache_read_input_tokens=4,
+                cache_creation_input_tokens=5,
+                reasoning_tokens=2,
+            )
         )
         await self.push_frame(LLMFullResponseEndFrame())
 
 
-class TextCollector(FrameProcessor):
-    def __init__(self) -> None:
-        super().__init__(name="text_collector", enable_direct_mode=True)
-        self.text: list[str] = []
-        self.error: str | None = None
+class Collector(FrameProcessor):
+    def __init__(self, *, cancel_mode=False):
+        super().__init__(name="collector", enable_direct_mode=True)
+        self.cancel_mode = cancel_mode
         self.done = asyncio.Event()
+        self.frames = []
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+    async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, LLMTextFrame):
-            self.text.append(frame.text)
-        elif isinstance(frame, ErrorFrame):
-            self.error = frame.error
+        self.frames.append(frame)
+        if self.cancel_mode and isinstance(frame, LLMTextFrame):
             self.done.set()
-        elif isinstance(frame, LLMFullResponseEndFrame):
+        if isinstance(
+            frame, (ErrorFrame, LLMFullResponseEndFrame, CancelFrame)
+        ) or type(frame).__name__ in {"TranscriptionFrame", "TTSTextFrame"}:
             self.done.set()
         await self.push_frame(frame, direction)
 
 
-@dataclass(frozen=True)
-class PipelineResult:
-    text: str
-    error: str | None
-
-
-async def run_pipeline(
-    service: LLMService, *, prompt: str, conversation_id: str
-) -> PipelineResult:
-    collector = TextCollector()
+async def run(
+    *,
+    fail=False,
+    tool=False,
+    veto=None,
+    messages=None,
+    tools=None,
+    setup=None,
+    service=None,
+):
+    collector = Collector(cancel_mode=getattr(service, "cancel", False))
     worker = PipelineWorker(
-        Pipeline([service, collector]),
+        Pipeline([service or Service(fail=fail, tool=tool, veto=veto), collector]),
         cancel_on_idle_timeout=False,
         enable_rtvi=False,
-        conversation_id=conversation_id,
+        conversation_id="fixture-conversation",
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
     )
+    if setup:
+        setup(worker)
     runner = WorkerRunner(handle_sigint=False)
-    await runner.add_workers(worker)
+    if CURRENT:
+        await runner.add_workers(worker)
 
-    async def drive() -> None:
-        await asyncio.sleep(0.05)
+    async def drive():
+        await asyncio.sleep(0.02)
         await worker.queue_frame(
-            LLMContextFrame(LLMContext(messages=[{"role": "user", "content": prompt}]))
+            LLMContextFrame(
+                LLMContext(
+                    messages=messages
+                    or [{"role": "user", "content": "Actual native prompt."}],
+                    **({"tools": tools} if tools is not None else {}),
+                )
+            )
         )
-        await asyncio.wait_for(collector.done.wait(), timeout=30)
-        await worker.queue_frame(EndFrame())
+        await asyncio.wait_for(collector.done.wait(), 10)
+        if collector.cancel_mode:
+            await worker.cancel(reason="controlled cancellation")
+        else:
+            await worker.queue_frame(EndFrame())
 
-    await asyncio.wait_for(asyncio.gather(runner.run(), drive()), timeout=40)
-    return PipelineResult(text="".join(collector.text), error=collector.error)
+    await asyncio.wait_for(
+        asyncio.gather(runner.run() if CURRENT else runner.run(worker), drive()), 15
+    )
+    return collector, worker

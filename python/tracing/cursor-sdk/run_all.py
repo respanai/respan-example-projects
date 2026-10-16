@@ -1,23 +1,37 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-EXAMPLES = [
-    "01_agent_turn.py",
-    "02_terminal_and_mcp_tools.py",
-    "03_stop_cleanup.py",
-    "04_full_hook_transcript.py",
-]
+EXAMPLES = [p.name for p in sorted(Path(__file__).parent.glob("[0-9][0-9]_*.py"))]
 
 
-def main() -> None:
+def main():
     here = Path(__file__).resolve().parent
-    for example in EXAMPLES:
-        print(f"\n### running {example}", flush=True)
-        subprocess.run([sys.executable, str(here / example)], check=True)
+    env = os.environ.copy()
+    env.setdefault("RESPAN_EXAMPLE_RUN_ID", "p10-cursor-" + str(time.time_ns()))
+    failed = []
+    for name in EXAMPLES:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(here / name)], env=env, timeout=90, check=False
+            )
+            if result.returncode:
+                failed.append({"script": name, "exit_code": result.returncode})
+        except subprocess.TimeoutExpired:
+            failed.append({"script": name, "timeout": 90})
+    print(
+        {
+            "total": len(EXAMPLES),
+            "failed": failed,
+            "run_id": env["RESPAN_EXAMPLE_RUN_ID"],
+        }
+    )
+    return int(bool(failed))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

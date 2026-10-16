@@ -27,7 +27,7 @@ def create_runner(model: llm.Model):
 
 def main() -> None:
     if not live_example_enabled():
-        print("skipped live gateway; RESPAN_MIRASCOPE_RUN_LIVE=0")
+        print("skipped live gateway; set RESPAN_MIRASCOPE_RUN_LIVE=1 to enable")
         return
 
     respan = create_respan(WORKFLOW_NAME)

@@ -19,7 +19,7 @@ def main() -> None:
             EXAMPLE_NAME,
             run_id,
             "afterShellExecution",
-            command="rg -n \"health|FastAPI\" app",
+            command='rg -n "health|FastAPI" app',
             output="app/main.py:8:app = FastAPI()\napp/main.py:19:@app.get('/health')",
             duration=160,
         ),
@@ -39,6 +39,7 @@ def main() -> None:
             text="The health endpoint is defined in app/main.py and returns service status.",
         ),
     ]
+    events.append(make_event(EXAMPLE_NAME, run_id, "stop", status="completed"))
     replay_events(EXAMPLE_NAME, events, run_id=run_id)
 
 

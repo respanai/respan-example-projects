@@ -15,6 +15,10 @@ SCRIPTS = (
     "03_expected_error.py",
     "04_privacy.py",
     "05_live_gateway.py",
+    "06_context_calls_and_toolkits.py",
+    "07_controlled_provider_http.py",
+    "08_complete_tools_and_history.py",
+    "09_stream_errors_and_veto.py",
 )
 
 
