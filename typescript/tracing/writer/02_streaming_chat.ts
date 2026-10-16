@@ -17,7 +17,9 @@ try {
     runWithWriterWorkflow(respan, workflowName, async () => {
       const runner = writer.chat.stream({
         model: DEFAULT_CHAT_MODEL,
-        messages: [{ role: "user", content: "Stream a short Writer tracing sentence." }],
+        messages: [
+          { role: "user", content: "Stream a short Writer tracing sentence." },
+        ],
         stream_options: { include_usage: true },
       });
       return await runner.finalChatCompletion();

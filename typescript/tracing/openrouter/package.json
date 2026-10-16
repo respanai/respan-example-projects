@@ -4,20 +4,31 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "chat": "tsx 01_chat_completion.ts",
-    "tools": "tsx 02_tool_calling.ts",
-    "stream": "tsx 03_streaming.ts",
-    "embeddings": "tsx 04_embeddings.ts",
-    "examples": "tsx run_all.ts",
-    "typecheck": "tsc --noEmit"
+    "chat": "node --import tsx 01_chat_completion.ts",
+    "tools": "node --import tsx 02_tool_calling.ts",
+    "stream": "node --import tsx 03_streaming.ts",
+    "embeddings": "node --import tsx 04_embeddings.ts",
+    "examples": "node --import tsx run_all.ts",
+    "typecheck": "tsc --noEmit",
+    "responses": "node --import tsx 05_responses.ts",
+    "call-model": "node --import tsx 06_call_model.ts",
+    "outcomes": "node --import tsx 07_native_outcomes.ts"
   },
   "dependencies": {
-    "@openrouter/sdk": "^0.13.7",
+    "@openrouter/sdk": "^1.4.25",
     "@respan/instrumentation-openrouter": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-openrouter",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.6.1",
     "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "@respan/tracing": "^1.3.0",
+    "@respan/respan-sdk": "^1.1.7",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/core": "^2.10.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@opentelemetry/sdk-trace-node": "^2.10.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
+    "@traceloop/ai-semantic-conventions": "^0.27.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.29"

@@ -12,7 +12,11 @@ const workflowName = "writer.tool_calling.workflow";
 const respan = createRespan();
 const writer = createWriterClient();
 
-function getWeather(args: { city: string }): { city: string; forecast: string; temperature_c: number } {
+function getWeather(args: { city: string }): {
+  city: string;
+  forecast: string;
+  temperature_c: number;
+} {
   return { city: args.city, forecast: "clear", temperature_c: 23 };
 }
 
@@ -21,7 +25,12 @@ try {
     runWithWriterWorkflow(respan, workflowName, async () => {
       const first = await writer.chat.chat({
         model: DEFAULT_CHAT_MODEL,
-        messages: [{ role: "user", content: "Use a tool to check the weather in Tokyo." }],
+        messages: [
+          {
+            role: "user",
+            content: "Use a tool to check the weather in Tokyo.",
+          },
+        ],
         tools: [
           {
             type: "function",
@@ -44,13 +53,22 @@ try {
         throw new Error("Writer did not return a tool call.");
       }
 
-      const args = JSON.parse(toolCall.function.arguments || "{}") as { city: string };
-      const toolResult = getWeather(args);
+      const args = JSON.parse(toolCall.function.arguments || "{}") as {
+        city: string;
+      };
+      const toolResult = await respan.withTool(
+        { name: "get_weather" },
+        async (input: { city: string }) => getWeather(input),
+        args,
+      );
 
       return await writer.chat.chat({
         model: DEFAULT_CHAT_MODEL,
         messages: [
-          { role: "user", content: "Use a tool to check the weather in Tokyo." },
+          {
+            role: "user",
+            content: "Use a tool to check the weather in Tokyo.",
+          },
           first.choices[0].message,
           {
             role: "tool",
@@ -64,7 +82,8 @@ try {
   );
 
   logExampleResult(workflowName, {
-    expected: "two chat spans plus a tool execution child span",
+    expected:
+      "two chat spans plus the explicit withTool execution span; historical context adds no executions",
     actual: finalCompletion.choices[0]?.message?.content,
   });
 } finally {

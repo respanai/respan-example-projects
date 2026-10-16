@@ -19,7 +19,9 @@ try {
       try {
         await writer.chat.chat({
           model: DEFAULT_CHAT_MODEL,
-          messages: [{ role: "user", content: "Trigger the expected error path." }],
+          messages: [
+            { role: "user", content: "Trigger the expected error path." },
+          ],
         });
       } catch (error) {
         errorMessage = error instanceof Error ? error.message : String(error);
