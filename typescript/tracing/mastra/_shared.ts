@@ -8,7 +8,9 @@ import {
 } from "@mastra/core/test-utils/llm-mock";
 import { Observability, SamplingStrategyType } from "@mastra/observability";
 import { MastraInstrumentor } from "@respan/instrumentation-mastra";
-import { Respan } from "@respan/respan";
+import { RespanTelemetry, propagateAttributes } from "@respan/tracing";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
+import { writeFileSync } from "node:fs";
 import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -30,7 +32,10 @@ function suppressExampleRespanLogs(): void {
 
   console.debug = (...args: unknown[]) => {
     const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("[Respan Debug]")) {
+    if (
+      firstArg.startsWith("[Respan]") ||
+      firstArg.startsWith("[Respan Debug]")
+    ) {
       return;
     }
     originalConsoleDebug(...args);
@@ -46,7 +51,10 @@ function suppressExampleRespanLogs(): void {
 
   console.log = (...args: unknown[]) => {
     const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("Respan tracing")) {
+    if (
+      firstArg.startsWith("[Respan]") ||
+      firstArg.startsWith("Respan tracing")
+    ) {
       return;
     }
     originalConsoleLog(...args);
@@ -84,7 +92,9 @@ export function loadRootEnv(): void {
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`${name} is required. Add it to respan-example-projects/.env.`);
+    throw new Error(
+      `${name} is required. Add it to respan-example-projects/.env.`,
+    );
   }
   return value;
 }
@@ -104,14 +114,17 @@ export function createToolCallModel() {
         rawCall: { rawPrompt: null, rawSettings: {} },
         finishReason: callCount === 1 ? "tool-calls" : "stop",
         usage: { inputTokens: 10, outputTokens: 6, totalTokens: 16 },
-        content: callCount === 1
-          ? [{
-              type: "tool-call",
-              toolCallId: "call_weather_tokyo",
-              toolName: "getWeather",
-              input: JSON.stringify({ city: "Tokyo" }),
-            }]
-          : [{ type: "text", text: "Tokyo is sunny and 72 F." }],
+        content:
+          callCount === 1
+            ? [
+                {
+                  type: "tool-call",
+                  toolCallId: "call_weather_tokyo",
+                  toolName: "getWeather",
+                  input: JSON.stringify({ city: "Tokyo" }),
+                },
+              ]
+            : [{ type: "text", text: "Tokyo is sunny and 72 F." }],
         warnings: [],
       };
     },
@@ -138,41 +151,82 @@ export function createRuntime<
   workflows?: TWorkflows,
 ): {
   mastra: Mastra<TAgents, TWorkflows>;
-  respan: Respan;
+  respan: RespanTelemetry;
+  observability: Observability;
   instrumentor: MastraInstrumentor;
 } {
   loadRootEnv();
   suppressExampleRespanLogs();
   const instrumentor = new MastraInstrumentor();
-  const respan = new Respan({
-    apiKey: requireEnv("RESPAN_API_KEY"),
+  const exporting = process.env.RESPAN_EXPORT === "1";
+  const captures: unknown[] = [];
+  const localExporter = new InMemorySpanExporter();
+  const respan = new RespanTelemetry({
+    apiKey: exporting
+      ? requireEnv("RESPAN_API_KEY")
+      : "local-only-mastra-example",
+    exporter: exporting ? undefined : localExporter,
+    disableBatch: true,
+    disabledInstrumentations: [
+      "openAI",
+      "anthropic",
+      "azureOpenAI",
+      "cohere",
+      "bedrock",
+      "googleVertexAI",
+      "googleAIPlatform",
+      "pinecone",
+      "together",
+      "langChain",
+      "llamaIndex",
+      "chromaDB",
+      "qdrant",
+    ],
+    spanPostprocessCallback: (span) => {
+      captures.push({
+        name: span.name,
+        traceId: span.spanContext().traceId,
+        spanId: span.spanContext().spanId,
+        parentSpanId: span.parentSpanContext?.spanId,
+        attributes: span.attributes,
+        status: span.status,
+      });
+      if (process.env.MASTRA_CAPTURE_PATH)
+        writeFileSync(
+          process.env.MASTRA_CAPTURE_PATH,
+          JSON.stringify({ runId: EXAMPLE_RUN_ID, captures }, null, 2),
+        );
+    },
     baseURL: process.env.RESPAN_BASE_URL,
     appName: "mastra-typescript-examples",
-    instrumentations: [instrumentor],
     silenceInitializationMessage: true,
   });
 
-  const mastra = new Mastra({
-    agents,
-    workflows,
-    observability: new Observability({
-      configs: {
-        default: {
-          serviceName: "respan-mastra-typescript-examples",
-          sampling: { type: SamplingStrategyType.ALWAYS },
-          exporters: [instrumentor],
-          excludeSpanTypes: [
-            SpanType.MODEL_CHUNK,
-            SpanType.MODEL_STEP,
-            SpanType.MODEL_INFERENCE,
-          ],
+  const observability = new Observability({
+    configs: {
+      default: {
+        serviceName: "respan-mastra-typescript-examples",
+        sampling: { type: SamplingStrategyType.ALWAYS },
+        exporters: [instrumentor],
+        // Native Mastra defaults bound arrays to 50 entries. These controlled
+        // fidelity examples deliberately request larger native payloads.
+        serializationOptions: {
+          maxArrayLength: 100000,
+          maxObjectKeys: 100000,
+          maxDepth: 100,
+          maxStringLength: 10000000,
         },
       },
-      sensitiveDataFilter: false,
-    }),
+    },
+    sensitiveDataFilter: false,
+  });
+  const mastra = new Mastra<TAgents, TWorkflows>({
+    agents,
+    workflows,
+    observability,
   });
 
-  return { mastra, respan, instrumentor };
+  return { mastra, respan, instrumentor, observability };
 }
 
 export function getTraceWorkflowName(workflowName: string): string {
@@ -181,14 +235,15 @@ export function getTraceWorkflowName(workflowName: string): string {
 
 export async function runWithRespanWorkflow<T>(
   mastra: Mastra<any>,
-  respan: Respan,
+  respan: RespanTelemetry,
   workflowName: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const { mastraWorkflowName, traceWorkflowName } = normalizeWorkflowName(workflowName);
+  const { mastraWorkflowName, traceWorkflowName } =
+    normalizeWorkflowName(workflowName);
   await respan.initialize();
   try {
-    return await respan.propagateAttributes(
+    return await propagateAttributes(
       {
         custom_identifier: EXAMPLE_RUN_ID,
         trace_group_identifier: traceWorkflowName,

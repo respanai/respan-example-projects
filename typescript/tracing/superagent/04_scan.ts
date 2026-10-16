@@ -1,50 +1,21 @@
-import {
-  configureEnvironment,
-  createRespan,
-  createSuperagentClient,
-  logExampleResult,
-  runWithExampleTrace,
-} from "./_shared.js";
-
-const workflowName = "TypeScript Superagent Scan Example";
-
-export async function scanExample(): Promise<void> {
-  const respan = await createRespan("typescript-superagent-scan-example");
-  await respan.initialize();
-
+import assert from "node:assert/strict";
+import { runExample } from "./_shared.js";
+import { daytonaFixture } from "./_fixtures.js";
+await runExample("scan", async ({ client, fixture }) => {
+  const transport = fixture ? await daytonaFixture() : undefined;
   try {
-    const result = await runWithExampleTrace(respan, workflowName, async () => {
-      if (!process.env.DAYTONA_API_KEY) {
-        return {
-          skipped: true,
-          reason: "DAYTONA_API_KEY is not set; skipping live scan example.",
-        };
-      }
-
-      const config = configureEnvironment();
-      const client = await createSuperagentClient();
-      try {
-        const scan = await client.scan({
-          repo: "https://github.com/respanai/respan-example-projects",
-          model: config.model,
-        });
-
-        return {
-          skipped: false,
-          result: scan.result.slice(0, 500),
-          usage: scan.usage,
-        };
-      } catch (error) {
-        return {
-          skipped: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
+    const result = await client.scan({
+      repo:
+        process.env.SUPERAGENT_SCAN_REPO ??
+        "https://example.invalid/controlled-repo",
+      branch: "main",
     });
-
-    logExampleResult(workflowName, result);
+    if (transport) {
+      assert.equal(result.result, "controlled native scan report");
+      assert.ok(transport.calls.some((c) => c.method === "delete"));
+    }
+    return result;
   } finally {
+    transport?.close();
   }
-}
-
-await scanExample();
+});

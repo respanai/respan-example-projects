@@ -4,21 +4,36 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "example:basic": "tsx 01_agent_generate.ts",
-    "example:tool": "tsx 02_agent_tool_call.ts",
-    "example:stream": "tsx 03_agent_stream.ts",
-    "example:failure": "tsx 04_agent_failure.ts",
-    "examples": "npm run example:basic && npm run example:tool && npm run example:stream && npm run example:failure"
+    "example:basic": "node --import tsx 01_agent_generate.ts",
+    "example:tool": "node --import tsx 02_agent_tool_call.ts",
+    "example:stream": "node --import tsx 03_agent_stream.ts",
+    "example:failure": "node --import tsx 04_agent_failure.ts",
+    "examples": "node --import tsx run_all.ts",
+    "typecheck": "tsc --noEmit",
+    "example:workflow": "node --import tsx 05_workflow.ts",
+    "example:fidelity": "node --import tsx 06_native_shapes.ts",
+    "example:privacy": "node --import tsx 07_privacy.ts"
   },
   "dependencies": {
-    "@mastra/core": "1.36.0",
-    "@mastra/observability": "1.13.0",
+    "@mastra/core": "1.75.0",
+    "@mastra/observability": "1.18.4",
     "@respan/instrumentation-mastra": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-mastra",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
+    "@respan/respan": "^2.5.0",
+    "@respan/respan-sdk": "^1.3.4",
+    "@respan/tracing": "^1.6.1",
     "dotenv": "^17.2.3",
     "tsx": "^4.20.6",
-    "zod": "^4.1.13"
+    "zod": "^4.1.13",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/core": "^2.10.0",
+    "@traceloop/ai-semantic-conventions": "^0.13.0",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

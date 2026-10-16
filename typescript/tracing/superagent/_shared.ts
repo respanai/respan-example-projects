@@ -1,106 +1,130 @@
-import dotenv from "dotenv";
-import { Respan } from "@respan/respan";
+import { context } from "@opentelemetry/api";
+import {
+  RespanTelemetry,
+  propagateAttributes,
+  INSTRUMENTATION_INFO,
+  type InstrumentationName,
+} from "@respan/tracing";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { SuperagentInstrumentor } from "@respan/instrumentation-superagent";
-import type { SafetyClient, SupportedModel } from "safety-agent";
-import type * as SafetyAgentModule from "safety-agent";
-import path from "node:path";
+import { CONTEXT_KEY_ALLOW_TRACE_CONTENT } from "@traceloop/ai-semantic-conventions";
+import * as sdk from "safety-agent";
+import type { SupportedModel } from "safety-agent";
+import dotenv from "dotenv";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const exampleDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(exampleDir, "../../..");
-dotenv.config({ path: path.join(repoRoot, ".env") });
-
+import { providerFixture } from "./_fixtures.js";
+export { context, CONTEXT_KEY_ALLOW_TRACE_CONTENT };
+const liveMode = process.env.SUPERAGENT_EXAMPLE_PROVIDER === "live";
+if (liveMode || process.env.RESPAN_EXAMPLE_EXPORT === "1")
+  dotenv.config({
+    path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env"),
+    override: false,
+    quiet: true,
+  });
 export const RUN_ID =
-  process.env.RESPAN_EXAMPLE_RUN_ID || `superagent-ts-${Date.now()}`;
-
-export interface ExampleConfig {
-  respanApiKey: string;
-  respanBaseURL?: string;
-  model: SupportedModel;
-}
-
-export function configureEnvironment(): ExampleConfig {
-  const respanApiKey = process.env.RESPAN_API_KEY;
-  if (!respanApiKey) {
-    throw new Error("Set RESPAN_API_KEY in the respan-example-projects repo root .env file.");
+  process.env.RESPAN_EXAMPLE_RUN_ID ?? `superagent-ts-${Date.now()}`;
+export const MODEL = (
+  liveMode
+    ? (process.env.SUPERAGENT_MODEL ?? "openai/gpt-4o-mini")
+    : "openai-compatible/controlled"
+) as SupportedModel;
+export async function runExample(
+  scenario: string,
+  fn: (env: {
+    runtime: RespanTelemetry;
+    client: sdk.SafetyClient;
+    fixture: ReturnType<typeof providerFixture> | undefined;
+  }) => Promise<unknown>,
+) {
+  const exporting = process.env.RESPAN_EXAMPLE_EXPORT === "1";
+  const live = process.env.SUPERAGENT_EXAMPLE_PROVIDER === "live";
+  if (exporting || live)
+    dotenv.config({
+      path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env"),
+      override: false,
+      quiet: true,
+    });
+  if (exporting && !process.env.RESPAN_API_KEY)
+    throw new Error("RESPAN_API_KEY is required for explicit export");
+  for (const method of ["debug", "info", "log"] as const) {
+    const original = console[method].bind(console);
+    console[method] = (...args: unknown[]) => {
+      if (
+        typeof args[0] === "string" &&
+        /^(\[Respan|Respan tracing)/.test(args[0])
+      )
+        return;
+      original(...args);
+    };
   }
-
-  const respanBaseURL = process.env.RESPAN_BASE_URL;
-  const gatewayApiKey = process.env.RESPAN_GATEWAY_API_KEY || respanApiKey;
-  const gatewayBaseURL =
-    process.env.RESPAN_GATEWAY_BASE_URL ||
-    respanBaseURL ||
-    "https://api.respan.ai/api";
-
-  process.env.SUPERAGENT_API_KEY ||= "respan-superagent-example";
-  process.env.OPENAI_COMPATIBLE_API_KEY = gatewayApiKey;
-  process.env.OPENAI_COMPATIBLE_BASE_URL = gatewayBaseURL;
-  process.env.OPENAI_COMPATIBLE_SUPPORTS_STRUCTURED_OUTPUT = "true";
-
-  const rawModel = process.env.SUPERAGENT_MODEL || "gpt-4o-mini";
-  const model = (rawModel.includes("/")
-    ? rawModel
-    : `openai-compatible/${rawModel}`) as SupportedModel;
-
-  return {
-    respanApiKey,
-    respanBaseURL,
-    model,
-  };
-}
-
-let safetyAgentModulePromise: Promise<typeof SafetyAgentModule> | undefined;
-
-async function loadSafetyAgentModule(): Promise<typeof SafetyAgentModule> {
-  configureEnvironment();
-  safetyAgentModulePromise ??= import("safety-agent");
-  return await safetyAgentModulePromise;
-}
-
-export async function createRespan(appName: string): Promise<Respan> {
-  const config = configureEnvironment();
-  const safetyAgentModule = await loadSafetyAgentModule();
-
-  return new Respan({
-    apiKey: config.respanApiKey,
-    baseURL: config.respanBaseURL,
-    appName,
-    instrumentations: [new SuperagentInstrumentor({ safetyAgentModule })],
+  const local = new InMemorySpanExporter();
+  const captures: any[] = [];
+  const runtime = new RespanTelemetry({
+    apiKey: exporting ? process.env.RESPAN_API_KEY! : "controlled-local-only",
+    baseURL: process.env.RESPAN_BASE_URL,
+    exporter: exporting ? undefined : local,
+    disableBatch: true,
     silenceInitializationMessage: true,
-  });
-}
-
-export async function createSuperagentClient(): Promise<SafetyClient> {
-  const { createClient } = await loadSafetyAgentModule();
-  return createClient({
-    apiKey: process.env.SUPERAGENT_API_KEY,
-  });
-}
-
-export async function runWithExampleTrace<T>(
-  respan: Respan,
-  workflowName: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  return await respan.propagateAttributes(
-    {
-      trace_group_identifier: workflowName,
-      custom_identifier: RUN_ID,
-      customer_identifier: "superagent-typescript-example-user",
-      thread_identifier: `superagent-typescript-example-thread-${RUN_ID}`,
-      metadata: {
-        example: "typescript-superagent",
-        run_id: RUN_ID,
-        workflow_name: workflowName,
-      },
+    disabledInstrumentations: Object.keys(
+      INSTRUMENTATION_INFO,
+    ) as InstrumentationName[],
+    spanPostprocessCallback: (span) => {
+      captures.push({
+        name: span.name,
+        traceId: span.spanContext().traceId,
+        spanId: span.spanContext().spanId,
+        parentSpanId: span.parentSpanContext?.spanId,
+        attributes: span.attributes,
+        status: span.status,
+      });
     },
-    async () => await respan.withWorkflow({ name: workflowName }, fn),
+  });
+  await runtime.initialize();
+  const instrumentor = new SuperagentInstrumentor({ safetyAgentModule: sdk });
+  await instrumentor.activate();
+  const fixture = live ? undefined : providerFixture();
+  const client = sdk.createClient({
+    apiKey: live ? process.env.SUPERAGENT_API_KEY : "controlled-client",
+    enableFallback: false,
+  });
+  try {
+    await propagateAttributes(
+      {
+        custom_identifier: RUN_ID,
+        metadata: {
+          run_id: RUN_ID,
+          example: "typescript-superagent",
+          scenario,
+        },
+      },
+      () =>
+        runtime.withWorkflow({ name: `superagent-${scenario}` }, () =>
+          fn({ runtime, client, fixture }),
+        ),
+    );
+  } finally {
+    instrumentor.deactivate();
+    fixture?.close();
+    await runtime.shutdown();
+    if (process.env.SUPERAGENT_CAPTURE_DIR) {
+      mkdirSync(process.env.SUPERAGENT_CAPTURE_DIR, { recursive: true });
+      writeFileSync(
+        resolve(process.env.SUPERAGENT_CAPTURE_DIR, scenario + ".json"),
+        JSON.stringify({ runId: RUN_ID, captures }, null, 2),
+      );
+    }
+  }
+  console.log(
+    JSON.stringify({
+      runId: RUN_ID,
+      scenario,
+      spanCount: captures.length,
+      requests: fixture?.requests.length,
+      exporting,
+      live,
+    }),
   );
-}
-
-export function logExampleResult(
-  workflowName: string,
-  details: Record<string, unknown>,
-): void {
-  console.log(JSON.stringify({ workflowName, runId: RUN_ID, ...details }, null, 2));
+  return captures;
 }

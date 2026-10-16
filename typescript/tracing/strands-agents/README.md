@@ -1,36 +1,43 @@
-# Strands Agents + Respan Tracing Examples
+# Strands Agents TypeScript tracing examples
 
-Runnable Strands Agents TypeScript examples using `@respan/instrumentation-strands-agents`.
+These examples run released Strands `Agent`, `OpenAIModel`, graph, swarm, and MCP
+APIs with controlled in-memory OpenAI SSE responses. They capture traces locally
+by default and need no API keys. Use Node.js 22 or newer.
 
-## Setup
-
-These examples load environment variables from the repository root `.env` file.
+Build the instrumentation in the sibling `respan` checkout, then run:
 
 ```bash
-cd typescript/tracing/strands-agents
-npm install
+npm ci
+npm run typecheck
 npm run all
 ```
 
-Required root `.env` values:
+Only `@respan/instrumentation-strands-agents` comes from the local checkout.
+Respan companion packages are released registry packages, and `install-links=true`
+installs a package copy. The lockfile retains the relative local package path.
+Strands' optional telemetry peers use exporter version 0.219; npm installs
+Respan's newer exporter separately to satisfy both declared ranges.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `RESPAN_API_KEY` | Yes | Used for Respan trace export. |
-| `RESPAN_BASE_URL` | No | Defaults to `https://api.respan.ai/api`. |
-| `RESPAN_EXAMPLE_RUN_ID` | No | Custom run id used in metadata and console output. |
+The ten scripts cover basic invocation, native model-driven tools, streaming,
+structured output, graph, swarm, in-memory MCP tools, content privacy, a controlled
+provider error, and 75 messages plus a 5,001-value vector with scalar edge cases.
+The privacy script runs the provider normally while omitting trace content.
+The error script catches the expected native failure.
 
-The examples use deterministic Strands model providers so they exercise Strands agent, model, tool, structured output, graph, swarm, streaming, and MCP paths without requiring a separate model-provider key.
+Set `RESPAN_EXAMPLE_CAPTURE_DIR` to save local span records. Set
+`RESPAN_EXAMPLE_RUN_ID` to attach a shared marker. Captures include the workflow,
+trace and span IDs, parent links, attributes, events, and status.
 
-## Scripts
+To send controlled example traces to Respan, set `RESPAN_EXAMPLE_EXPORT=true` and
+provide `RESPAN_API_KEY`. `RESPAN_BASE_URL` is optional. Export mode reads the
+repository root `.env`; local capture does not require it.
 
-- `npm run 01:basic` - basic agent invocation.
-- `npm run 02:tool` - agent model-driven local tool call.
-- `npm run 03:streaming` - streamed agent output.
-- `npm run 04:structured` - structured output through the Strands structured-output tool.
-- `npm run 05:graph` - graph orchestration with two agents.
-- `npm run 06:swarm` - swarm orchestration with a structured handoff.
-- `npm run 07:mcp` - Strands agent using an in-memory MCP tool.
-- `npm run all` - run the complete set.
+To call a live OpenAI provider, set `STRANDS_EXAMPLE_PROVIDER=live` and
+`OPENAI_API_KEY`; optionally set `STRANDS_EXAMPLE_MODEL`. Provider calls and
+Respan trace export are independent options. The controlled error scenario
+always uses its local transport.
 
-Each script emits a readable workflow name, sets the same value as `trace_group_identifier`, and includes the run id in metadata so traces are easy to find in Respan.
+```bash
+RESPAN_EXAMPLE_CAPTURE_DIR=./captures npm run all
+RESPAN_EXAMPLE_EXPORT=true npm run 02:tool
+```

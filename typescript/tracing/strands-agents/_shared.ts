@@ -2,22 +2,26 @@ import {
   Agent,
   Graph,
   McpClient,
-  Model,
   Swarm,
   tool,
   type AgentResult,
-  type BaseModelConfig,
   type ContentBlock,
   type ContentBlockData,
-  type Message,
-  type ModelStreamEvent,
-  type StreamOptions,
-  type Usage,
 } from "@strands-agents/sdk";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StrandsAgentsInstrumentor } from "@respan/instrumentation-strands-agents";
 import { Respan } from "@respan/respan";
+import { OpenAIModel } from "@strands-agents/sdk/models/openai";
+import {
+  RespanTelemetry,
+  PROPAGATED_ATTRIBUTES_KEY,
+  INSTRUMENTATION_INFO,
+  type InstrumentationName,
+} from "@respan/tracing";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
+import { context } from "@opentelemetry/api";
+import { mkdirSync, writeFileSync } from "node:fs";
 import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -45,7 +49,9 @@ export type DemoMode =
   | "graph-writer"
   | "swarm-researcher"
   | "swarm-writer"
-  | "mcp";
+  | "mcp"
+  | "error"
+  | "large";
 
 export interface DemoMcpEnvironment {
   client: McpClient;
@@ -66,7 +72,10 @@ function suppressExampleRespanLogs(): void {
 
   console.debug = (...args: unknown[]) => {
     const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("[Respan Debug]")) {
+    if (
+      firstArg.startsWith("[Respan]") ||
+      firstArg.startsWith("[Respan Debug]")
+    ) {
       return;
     }
     originalConsoleDebug(...args);
@@ -82,7 +91,10 @@ function suppressExampleRespanLogs(): void {
 
   console.log = (...args: unknown[]) => {
     const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("Respan tracing")) {
+    if (
+      firstArg.startsWith("[Respan]") ||
+      firstArg.startsWith("Respan tracing")
+    ) {
       return;
     }
     originalConsoleLog(...args);
@@ -120,22 +132,11 @@ export function loadRootEnv(): void {
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`${name} is required. Add it to respan-example-projects/.env.`);
+    throw new Error(
+      `${name} is required. Add it to respan-example-projects/.env.`,
+    );
   }
   return value;
-}
-
-export function createRespan(appName: string): Respan {
-  loadRootEnv();
-  suppressExampleRespanLogs();
-
-  return new Respan({
-    apiKey: requireEnv("RESPAN_API_KEY"),
-    baseURL: process.env.RESPAN_BASE_URL ?? DEFAULT_BASE_URL,
-    appName,
-    instrumentations: [new StrandsAgentsInstrumentor()],
-    silenceInitializationMessage: true,
-  });
 }
 
 export async function runStrandsExample<T>(params: {
@@ -143,141 +144,227 @@ export async function runStrandsExample<T>(params: {
   workflowName: string;
   fn: () => Promise<T>;
 }): Promise<T> {
-  const respan = createRespan(params.appName);
+  const exportEnabled = process.env.RESPAN_EXAMPLE_EXPORT === "true";
+  if (exportEnabled || process.env.STRANDS_EXAMPLE_PROVIDER === "live")
+    loadRootEnv();
+  suppressExampleRespanLogs();
+  const plugin = new StrandsAgentsInstrumentor({
+    traceContent: process.env.RESPAN_TRACE_CONTENT !== "false",
+  });
+  const localExporter = new InMemorySpanExporter();
+  const respan = exportEnabled
+    ? new Respan({
+        apiKey: requireEnv("RESPAN_API_KEY"),
+        baseURL: process.env.RESPAN_BASE_URL ?? DEFAULT_BASE_URL,
+        appName: params.appName,
+        instrumentations: [plugin],
+        silenceInitializationMessage: true,
+      })
+    : new RespanTelemetry({
+        apiKey: "controlled-local-capture",
+        appName: params.appName,
+        exporter: localExporter,
+        disableBatch: true,
+        disabledInstrumentations: Object.keys(
+          INSTRUMENTATION_INFO,
+        ) as InstrumentationName[],
+        silenceInitializationMessage: true,
+      });
+  const previousMetricsExporter = process.env.OTEL_METRICS_EXPORTER;
+  process.env.OTEL_METRICS_EXPORTER = "none";
   await respan.initialize();
-
+  if (!exportEnabled) plugin.activate();
+  const attrs = {
+    custom_identifier: EXAMPLE_RUN_ID,
+    thread_identifier: `strands-agents-ts-thread-${EXAMPLE_RUN_ID}`,
+    trace_group_identifier: params.workflowName,
+    metadata: {
+      example: "strands-agents-typescript",
+      run_id: EXAMPLE_RUN_ID,
+      workflow_name: params.workflowName,
+    },
+  };
   try {
-    return await respan.propagateAttributes(
-      {
-        custom_identifier: EXAMPLE_RUN_ID,
-        thread_identifier: `strands-agents-ts-thread-${EXAMPLE_RUN_ID}`,
-        trace_group_identifier: params.workflowName,
-        metadata: {
-          example: "strands-agents-typescript",
-          run_id: EXAMPLE_RUN_ID,
-          workflow_name: params.workflowName,
-        },
-      },
-      async () => await respan.withWorkflow({ name: params.workflowName }, params.fn),
+    const execute = async () =>
+      await respan.withWorkflow({ name: params.workflowName }, params.fn);
+    return await context.with(
+      context.active().setValue(PROPAGATED_ATTRIBUTES_KEY, attrs),
+      execute,
     );
   } finally {
+    await respan.flush();
+    if (!exportEnabled && process.env.RESPAN_EXAMPLE_CAPTURE_DIR) {
+      mkdirSync(process.env.RESPAN_EXAMPLE_CAPTURE_DIR, { recursive: true });
+      const spans = localExporter.getFinishedSpans().map((span) => ({
+        name: span.name,
+        attributes: span.attributes,
+        events: span.events,
+        status: span.status,
+        spanContext: span.spanContext(),
+        parentSpanContext: span.parentSpanContext,
+      }));
+      writeFileSync(
+        join(
+          process.env.RESPAN_EXAMPLE_CAPTURE_DIR,
+          `${params.workflowName.replace(/[^a-zA-Z0-9]+/g, "-")}.json`,
+        ),
+        JSON.stringify({ runId: EXAMPLE_RUN_ID, spans }, null, 2),
+      );
+    }
+    plugin.deactivate();
+    await respan.shutdown();
+    if (previousMetricsExporter === undefined)
+      delete process.env.OTEL_METRICS_EXPORTER;
+    else process.env.OTEL_METRICS_EXPORTER = previousMetricsExporter;
   }
 }
 
-export class DeterministicStrandsModel extends Model<BaseModelConfig> {
-  private readonly _config: BaseModelConfig;
-  private _callCount = 0;
-
-  constructor(private readonly _mode: DemoMode, config: BaseModelConfig = {}) {
-    super();
-    this._config = {
-      modelId: `respan-demo-strands-${_mode}`,
-      ...config,
-    };
-  }
-
-  get callCount(): number {
-    return this._callCount;
-  }
-
-  updateConfig(modelConfig: BaseModelConfig): void {
-    Object.assign(this._config, modelConfig);
-  }
-
-  getConfig(): BaseModelConfig {
-    return { ...this._config };
-  }
-
-  async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    this._callCount += 1;
-    const toolSpecs = options?.toolSpecs ?? [];
-    const hasToolResult = messages.some((message) =>
-      message.content.some((block) => "toolResult" in block.toJSON()),
-    );
-
-    if (toolSpecs.some((spec) => spec.name === STRUCTURED_OUTPUT_TOOL_NAME)) {
-      yield* streamToolUse(
-        STRUCTURED_OUTPUT_TOOL_NAME,
-        `structured-${this._callCount}`,
-        this.structuredOutputPayload(),
-        usage(20, 8),
-      );
-      return;
-    }
-
-    if (this._mode === "tool" && !hasToolResult) {
-      yield* streamToolUse("get_weather", "weather-call-1", { city: "Tokyo" }, usage(18, 4));
-      return;
-    }
-
-    if (this._mode === "mcp" && !hasToolResult) {
-      yield* streamToolUse(
-        "summarize_city",
-        "mcp-call-1",
-        { city: "Lisbon" },
-        usage(18, 4),
-      );
-      return;
-    }
-
-    yield* streamText(this.textResponse(messages), {
-      usage: usage(this._mode === "streaming" ? 16 : 24, this._mode === "streaming" ? 12 : 10),
-      chunkSize: this._mode === "streaming" ? 14 : undefined,
+/** Exercise the released provider's request mapper, SSE parser and agent loop. */
+export function createNativeFixtureModel(mode: DemoMode): OpenAIModel {
+  if (process.env.STRANDS_EXAMPLE_PROVIDER === "live" && mode !== "error") {
+    loadRootEnv();
+    return new OpenAIModel({
+      api: "chat",
+      apiKey: requireEnv("OPENAI_API_KEY"),
+      modelId: process.env.STRANDS_EXAMPLE_MODEL ?? "gpt-4.1-nano",
     });
   }
-
-  private structuredOutputPayload(): Record<string, unknown> {
-    switch (this._mode) {
-      case "structured":
-        return {
-          city: "Tokyo",
-          score: 92,
-          rationale: "Reliable transit, compact neighborhoods, and strong food options.",
-        };
-      case "swarm-researcher":
-        return {
-          agentId: "swarm-writer",
-          message: "Use these Lisbon notes to draft a compact city brief.",
-          context: { city: "Lisbon", highlights: ["trams", "riverfront", "tilework"] },
-        };
-      case "swarm-writer":
-        return {
-          message: "Lisbon brief: trams, riverfront walks, tilework, and hillside viewpoints.",
-        };
-      default:
-        return { message: this.textResponse([]) };
-    }
-  }
-
-  private textResponse(messages: Message[]): string {
-    if (this._mode === "tool") {
-      const forecast = findToolResultText(messages) ?? "sunny with light wind";
-      return `The Tokyo forecast is ${forecast}.`;
-    }
-    if (this._mode === "mcp") {
-      const summary = findToolResultText(messages) ?? "Lisbon has river views and compact neighborhoods.";
-      return `MCP summary received: ${summary}`;
-    }
-    if (this._mode === "streaming") {
-      return "Streaming Strands agent telemetry through Respan with chunked model output.";
-    }
-    if (this._mode === "graph-researcher") {
-      return "Research notes: Kyoto has temples, rail access, gardens, and compact food districts.";
-    }
-    if (this._mode === "graph-writer") {
-      return "Kyoto brief: temples, reliable rail, gardens, and focused food neighborhoods.";
-    }
-    return "Hello from Strands Agents TypeScript instrumentation.";
-  }
+  let calls = 0;
+  return new OpenAIModel({
+    api: "chat",
+    apiKey: "controlled-fixture",
+    modelId: "gpt-4.1-nano",
+    clientConfig: {
+      maxRetries: 0,
+      fetch: async (_url, init) => {
+        calls++;
+        if (mode === "error")
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: "Controlled Strands provider error",
+                type: "fixture_error",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        const body = JSON.parse(String(init?.body));
+        const hasResult = body.messages.some(
+          (message: { role: string }) => message.role === "tool",
+        );
+        const tools = body.tools ?? [];
+        let selected: string | undefined;
+        let args: Record<string, unknown> = {};
+        if (
+          tools.some(
+            (item: any) => item.function.name === STRUCTURED_OUTPUT_TOOL_NAME,
+          )
+        ) {
+          selected = STRUCTURED_OUTPUT_TOOL_NAME;
+          args =
+            mode === "swarm-researcher"
+              ? {
+                  agentId: "swarm-writer",
+                  message: "Write a Lisbon brief.",
+                  context: { city: "Lisbon" },
+                }
+              : mode === "swarm-writer"
+                ? {
+                    message: "Lisbon brief: trams, riverfront walks, tilework.",
+                  }
+                : {
+                    city: "Tokyo",
+                    score: 92,
+                    rationale: "Reliable transit and compact neighborhoods.",
+                  };
+        } else if (!hasResult && mode === "tool") {
+          selected = "get_weather";
+          args = { city: "Tokyo" };
+        } else if (!hasResult && mode === "mcp") {
+          selected = "summarize_city";
+          args = { city: "Lisbon" };
+        }
+        const text =
+          mode === "large"
+            ? JSON.stringify({
+                vector: Array.from({ length: 5001 }, (_, i) => i / 5001),
+                zero: 0,
+                falsy: false,
+                empty: "",
+                nothing: null,
+              })
+            : mode === "streaming"
+              ? "Streaming native Strands provider output through Respan."
+              : mode === "graph-researcher"
+                ? "Kyoto research: temples, rail access, gardens."
+                : mode === "graph-writer"
+                  ? "Kyoto brief: temples, reliable rail, gardens."
+                  : mode === "tool"
+                    ? "The Tokyo forecast is sunny with light wind."
+                    : mode === "mcp"
+                      ? "Lisbon MCP summary received."
+                      : "Hello from Strands Agents TypeScript instrumentation.";
+        const delta = selected
+          ? {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: `native-${mode}-${calls}`,
+                  type: "function",
+                  function: { name: selected, arguments: JSON.stringify(args) },
+                },
+              ],
+            }
+          : { role: "assistant", content: text };
+        const chunks = [
+          { choices: [{ index: 0, delta, finish_reason: null }] },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: selected ? "tool_calls" : "stop",
+              },
+            ],
+          },
+          {
+            choices: [],
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 8,
+              total_tokens: 28,
+            },
+          },
+        ];
+        const payload =
+          chunks
+            .map(
+              (chunk) =>
+                `data: ${JSON.stringify({ id: "controlled", object: "chat.completion.chunk", created: 1, model: "gpt-4.1-nano", ...chunk })}\n\n`,
+            )
+            .join("") + "data: [DONE]\n\n";
+        return new Response(payload, {
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    },
+  });
 }
 
-export function createAgent(mode: DemoMode, options: Partial<ConstructorParameters<typeof Agent>[0]> = {}): Agent {
+export function createAgent(
+  mode: DemoMode,
+  options: Partial<ConstructorParameters<typeof Agent>[0]> = {},
+): Agent {
   return new Agent({
     id: options.id ?? mode,
     name: options.name ?? readableAgentName(mode),
-    description: options.description ?? `Deterministic ${mode} Strands demo agent`,
-    model: options.model ?? new DeterministicStrandsModel(mode),
-    systemPrompt: options.systemPrompt ?? "Return concise demo responses for Respan tracing examples.",
+    description:
+      options.description ?? `Native provider ${mode} Strands demo agent`,
+    model: options.model ?? createNativeFixtureModel(mode),
+    systemPrompt:
+      options.systemPrompt ??
+      "Return concise demo responses for Respan tracing examples.",
     printer: false,
     tools: options.tools ?? (mode === "tool" ? [getWeatherTool] : []),
     structuredOutputSchema: options.structuredOutputSchema,
@@ -352,7 +439,8 @@ export async function createDemoMcpEnvironment(): Promise<DemoMcpEnvironment> {
     }),
   );
 
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
   const client = new McpClient({
@@ -376,7 +464,9 @@ export function resultText(result: AgentResult): string {
   return result.toString();
 }
 
-export function multiAgentText(result: { content: readonly ContentBlock[] }): string {
+export function multiAgentText(result: {
+  content: readonly ContentBlock[];
+}): string {
   return result.content.map(contentBlockText).filter(Boolean).join(" ");
 }
 
@@ -384,7 +474,13 @@ export function logExampleResult(
   workflowName: string,
   details: Record<string, unknown>,
 ): void {
-  console.log(JSON.stringify({ workflowName, runId: EXAMPLE_RUN_ID, ...details }, null, 2));
+  console.log(
+    JSON.stringify(
+      { workflowName, runId: EXAMPLE_RUN_ID, ...details },
+      null,
+      2,
+    ),
+  );
 }
 
 const getWeatherTool = tool({
@@ -406,93 +502,15 @@ function readableAgentName(mode: DemoMode): string {
     .join(" ");
 }
 
-async function* streamText(
-  text: string,
-  options: { usage: Usage; chunkSize?: number },
-): AsyncIterable<ModelStreamEvent> {
-  yield { type: "modelMessageStartEvent", role: "assistant" };
-  yield { type: "modelContentBlockStartEvent" };
-  for (const chunk of chunkText(text, options.chunkSize ?? text.length)) {
-    yield {
-      type: "modelContentBlockDeltaEvent",
-      delta: { type: "textDelta", text: chunk },
-    };
-  }
-  yield { type: "modelContentBlockStopEvent" };
-  yield { type: "modelMessageStopEvent", stopReason: "endTurn" };
-  yield { type: "modelMetadataEvent", usage: options.usage };
-}
-
-async function* streamToolUse(
-  name: string,
-  toolUseId: string,
-  input: Record<string, unknown>,
-  tokenUsage: Usage,
-): AsyncIterable<ModelStreamEvent> {
-  yield { type: "modelMessageStartEvent", role: "assistant" };
-  yield {
-    type: "modelContentBlockStartEvent",
-    start: { type: "toolUseStart", name, toolUseId },
-  };
-  yield {
-    type: "modelContentBlockDeltaEvent",
-    delta: { type: "toolUseInputDelta", input: JSON.stringify(input) },
-  };
-  yield { type: "modelContentBlockStopEvent" };
-  yield { type: "modelMessageStopEvent", stopReason: "toolUse" };
-  yield { type: "modelMetadataEvent", usage: tokenUsage };
-}
-
-function chunkText(text: string, size: number): string[] {
-  const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += size) {
-    chunks.push(text.slice(index, index + size));
-  }
-  return chunks;
-}
-
-function usage(inputTokens: number, outputTokens: number): Usage {
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: inputTokens + outputTokens,
-  };
-}
-
-function findToolResultText(messages: Message[]): string | undefined {
-  for (const message of messages) {
-    for (const block of message.content) {
-      const data = block.toJSON() as ContentBlockData;
-      if ("toolResult" in data) {
-        const content = data.toolResult.content;
-        const text = content.map((item) => {
-          if (typeof item === "string") {
-            return item;
-          }
-          if (typeof item === "object" && item !== null && "text" in item) {
-            return String(item.text);
-          }
-          if (typeof item === "object" && item !== null && "json" in item) {
-            return JSON.stringify(item.json);
-          }
-          return "";
-        }).filter(Boolean).join(" ");
-        if (text) {
-          return text;
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
 function contentBlockText(block: ContentBlock): string {
   const data = block.toJSON() as ContentBlockData;
   if ("text" in data) {
     return data.text;
   }
   if ("toolResult" in data) {
-    return data.toolResult.content.map((item) => JSON.stringify(item)).join(" ");
+    return data.toolResult.content
+      .map((item) => JSON.stringify(item))
+      .join(" ");
   }
   if ("toolUse" in data) {
     return `${data.toolUse.name}(${JSON.stringify(data.toolUse.input)})`;

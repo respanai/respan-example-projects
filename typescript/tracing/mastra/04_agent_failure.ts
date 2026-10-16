@@ -13,7 +13,8 @@ const workflowName = "Mastra Failure Example";
 const failingAgent = new Agent({
   id: "mastra-failure-agent",
   name: "Mastra Failure Agent",
-  instructions: "This request intentionally exercises the provider failure trace path.",
+  instructions:
+    "This request intentionally exercises the provider failure trace path.",
   model: createFailingModel(),
 });
 
@@ -25,10 +26,7 @@ const failureWorkflow = createWorkflow({
   .then(createStep(failingAgent))
   .commit();
 
-const { mastra, respan } = createRuntime(
-  { failingAgent },
-  { failureWorkflow },
-);
+const { mastra, respan } = createRuntime({ failingAgent }, { failureWorkflow });
 let failureName: string | undefined;
 
 try {
@@ -53,9 +51,15 @@ if (!failureName) {
   throw new Error("The intentional Mastra provider failure did not occur.");
 }
 
-console.log(JSON.stringify({
-  workflowName: getTraceWorkflowName(workflowName),
-  runId: EXAMPLE_RUN_ID,
-  expectedFailure: true,
-  failureName,
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      workflowName: getTraceWorkflowName(workflowName),
+      runId: EXAMPLE_RUN_ID,
+      expectedFailure: true,
+      failureName,
+    },
+    null,
+    2,
+  ),
+);
