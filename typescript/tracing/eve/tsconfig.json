@@ -12,5 +12,5 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["agent/**/*.ts", "examples/**/*.ts", "_env.ts"]
+  "include": ["agent/**/*.ts", "examples/**/*.ts", "scripts/**/*.ts", "_env.ts"]
 }

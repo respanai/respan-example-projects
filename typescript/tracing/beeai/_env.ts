@@ -16,7 +16,7 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-function findRootEnv(): string {
+function findRootEnv(): string | undefined {
   let current = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 8; i += 1) {
     const candidate = join(current, ".env");
@@ -25,19 +25,22 @@ function findRootEnv(): string {
     }
     current = dirname(current);
   }
-  throw new Error("Could not find respan-example-projects/.env from this example directory.");
+  return undefined;
 }
 
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`Set ${name} in respan-example-projects/.env to run this example.`);
+    throw new Error(
+      `Set ${name} in respan-example-projects/.env to run this example.`,
+    );
   }
   return value;
 }
 
 export function loadBeeAIExampleEnv(): BeeAIExampleEnv {
-  dotenv.config({ path: findRootEnv() });
+  const envPath = findRootEnv();
+  if (envPath) dotenv.config({ path: envPath });
 
   const respanApiKey = requireEnv("RESPAN_API_KEY");
   const gatewayApiKey = process.env.RESPAN_GATEWAY_API_KEY || respanApiKey;

@@ -1,5 +1,4 @@
 import * as beeaiFramework from "beeai-framework";
-import { BeeAIInstrumentation as OpenInferenceBeeAIInstrumentation } from "@arizeai/openinference-instrumentation-beeai";
 import { BeeAIInstrumentor } from "@respan/instrumentation-beeai";
 import { Respan } from "@respan/respan";
 import { loadBeeAIExampleEnv, type BeeAIExampleEnv } from "./_env.js";
@@ -21,7 +20,6 @@ export async function createBeeAIRespanRuntime(): Promise<BeeAIRespanRuntime> {
     instrumentations: [
       new BeeAIInstrumentor({
         sdkModule: beeaiFramework,
-        instrumentationClass: OpenInferenceBeeAIInstrumentation,
       }),
     ],
     silenceInitializationMessage: true,
@@ -46,9 +44,10 @@ export async function runWithBeeAIWorkflow<T>(
         workflow_name: workflowName,
       },
     },
-    async () => await respan.withWorkflow(
-      { name: workflowName, inputParameters: [input] },
-      fn,
-    ),
+    async () =>
+      await respan.withWorkflow(
+        { name: workflowName, inputParameters: [input] },
+        fn,
+      ),
   );
 }
