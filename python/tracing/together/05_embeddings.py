@@ -3,6 +3,7 @@ from __future__ import annotations
 from _shared import (
     embedding_model_name,
     example_attributes,
+    finish_respan,
     make_client,
     make_custom_identifier,
     make_respan,
@@ -44,7 +45,7 @@ def run_embeddings() -> None:
                 ]
             )
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 

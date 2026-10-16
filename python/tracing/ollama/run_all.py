@@ -15,6 +15,9 @@ SCRIPTS = (
     "03_tool_calling.py",
     "04_embeddings.py",
     "05_expected_error.py",
+    "06_async.py",
+    "07_content_policy.py",
+    "08_optional_live.py",
 )
 
 

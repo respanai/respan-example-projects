@@ -1,114 +1,128 @@
-"""Shared helpers for Hugging Face tracing examples."""
+"""Local recording by default; explicit export uses the released Respan exporter."""
 
 from __future__ import annotations
 
+import json
 import os
-import sys
-from datetime import datetime, timezone
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
-from typing import Any
+from uuid import uuid4
 
-from dotenv import load_dotenv
-from respan import Respan
+from _scenarios import SCENARIOS
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan_instrumentation_huggingface import HuggingFaceInstrumentor
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-load_dotenv(REPO_ROOT / ".env", override=True)
-
-DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
-DEFAULT_CUSTOMER_IDENTIFIER = "huggingface-example-user"
-DEFAULT_RUN_ID = datetime.now(timezone.utc).strftime("huggingface-%Y%m%d-%H%M%S")
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE, RESPAN_METADATA
 
 
-def install_compatible_transformers_module() -> type:
-    """Install a small module that matches the wrapped Transformers API."""
+class MarkerProcessor(SpanProcessor):
+    def __init__(self, marker: str, case: str):
+        self.marker = json.dumps(
+            {"run_id": marker, "integration": "huggingface", "case": case}
+        )
 
-    transformers_module = ModuleType("transformers")
+    def on_start(self, span, parent_context=None):
+        span.set_attribute(RESPAN_METADATA, self.marker)
 
-    class TextGenerationPipeline:
-        def __init__(
-            self,
-            *,
-            model_name: str = "respan-compatible-tiny-generator",
-            model_type: str = "causal-lm",
-            **forward_params: Any,
-        ) -> None:
-            self.model = SimpleNamespace(
-                config=SimpleNamespace(
-                    name_or_path=model_name,
-                    model_type=model_type,
+
+def run_example(case: str) -> None:
+    marker = os.getenv("RESPAN_EXAMPLE_RUN_ID", f"huggingface-{uuid4().hex}")
+    provider = TracerProvider()
+    provider.add_span_processor(MarkerProcessor(marker, case))
+    local = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(local))
+    wire = []
+    statuses = []
+    if os.getenv("RESPAN_EXAMPLE_EXPORT") == "1":
+        from dotenv import load_dotenv
+        from respan_tracing.exporters.respan import RespanSpanExporter
+
+        load_dotenv(
+            Path(
+                os.getenv(
+                    "RESPAN_EXAMPLE_ENV_FILE",
+                    Path(__file__).resolve().parents[3] / ".env",
                 )
-            )
-            self._forward_params = {
-                "temperature": 0.4,
-                "top_p": 0.92,
-                "max_length": 48,
-                "repetition_penalty": 1.05,
-                **forward_params,
+            ),
+            override=False,
+        )
+        key = os.getenv("RESPAN_API_KEY") or os.getenv("RESPAN_GATEWAY_API_KEY")
+        if not key:
+            raise RuntimeError("Set RESPAN_API_KEY to export controlled traces")
+        remote = RespanSpanExporter(
+            endpoint="https://api.respan.ai/api/v2/traces", api_key=key
+        )
+        original_post = remote._session.post
+
+        def post(*args, **kwargs):
+            # Observe the exporter's real body at its actual HTTP boundary.
+            body = json.loads(kwargs["data"])
+            result = original_post(*args, **kwargs)
+            wire.append(body)
+            statuses.append(result.status_code)
+            return result
+
+        remote._session.post = post
+        provider.add_span_processor(SimpleSpanProcessor(remote))
+    instrumentor = HuggingFaceInstrumentor(tracer_provider=provider)
+    instrumentor.activate()
+    try:
+        with provider.get_tracer("huggingface_examples").start_as_current_span(
+            f"huggingface_{case}", attributes={RESPAN_LOG_TYPE: "workflow"}
+        ):
+            result = SCENARIOS[case](provider)
+    finally:
+        instrumentor.deactivate()
+        provider.force_flush()
+        provider.shutdown()
+    spans = [
+        {
+            "name": s.name,
+            "trace_id": format(s.context.trace_id, "032x"),
+            "span_id": format(s.context.span_id, "016x"),
+            "parent_id": format(s.parent.span_id, "016x") if s.parent else None,
+            "attributes": dict(s.attributes),
+            "status": s.status.status_code.name,
+            "description": s.status.description,
+        }
+        for s in local.get_finished_spans()
+    ]
+    if case == "privacy":
+        calls = [
+            span
+            for span in spans
+            if span["name"] == "transformers_text_generation_pipeline.call"
+        ]
+        assert len(calls) == 4
+        assert all(
+            "traceloop.entity.input" not in span["attributes"]
+            and "traceloop.entity.output" not in span["attributes"]
+            and span["description"] is None
+            for span in calls
+        )
+    evidence = {
+        "run_id": marker,
+        "case": case,
+        "result": result,
+        "spans": spans,
+        "actual_exporter_bodies": wire,
+        "http_statuses": statuses,
+    }
+    output = os.getenv("RESPAN_EXAMPLE_OUTPUT_DIR")
+    if output:
+        directory = Path(output)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{case}.json").write_text(json.dumps(evidence, indent=2))
+    if wire and not statuses or any(status != 200 for status in statuses):
+        raise AssertionError("Controlled export was not accepted by HTTP")
+    print(
+        json.dumps(
+            {
+                "case": case,
+                "run_id": marker,
+                "local_span_count": len(spans),
+                "export_body_count": len(wire),
+                "http_statuses": statuses,
             }
-
-        def __call__(self, prompts: str | list[str], **kwargs: Any) -> list[dict[str, str]]:
-            self._forward_params.update(
-                {
-                    key: value
-                    for key, value in kwargs.items()
-                    if key in {"temperature", "top_p", "max_length", "repetition_penalty"}
-                }
-            )
-            prompt_list = [prompts] if isinstance(prompts, str) else list(prompts)
-            return [
-                {
-                    "generated_text": (
-                        f"{prompt} Respan captured this Hugging Face text "
-                        f"generation call."
-                    )
-                }
-                for prompt in prompt_list
-            ]
-
-    transformers_module.TextGenerationPipeline = TextGenerationPipeline
-    sys.modules["transformers"] = transformers_module
-    return TextGenerationPipeline
-
-
-def build_respan(
-    *,
-    example_name: str,
-    workflow_name: str,
-    trace_content: bool = True,
-) -> Respan:
-    api_key = _required_env("RESPAN_API_KEY")
-    base_url = os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL)
-    run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID", DEFAULT_RUN_ID)
-    os.environ["TRACELOOP_TRACE_CONTENT"] = "true" if trace_content else "false"
-
-    return Respan(
-        api_key=api_key,
-        base_url=base_url,
-        app_name=f"huggingface-{example_name}",
-        instrumentations=[HuggingFaceInstrumentor()],
-        customer_identifier=os.getenv(
-            "RESPAN_EXAMPLE_CUSTOMER_IDENTIFIER",
-            DEFAULT_CUSTOMER_IDENTIFIER,
-        ),
-        metadata={
-            "example": example_name,
-            "run_id": run_id,
-            "workflow_name": workflow_name,
-        },
-        environment="examples",
-        is_batching_enabled=False,
-        log_level=os.getenv("RESPAN_LOG_LEVEL", "WARNING"),
+        )
     )
-
-
-def print_result(label: str, value: Any) -> None:
-    print(f"{label}: {value}")
-
-
-def _required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value:
-        return value
-    raise RuntimeError(f"Missing {name} in {REPO_ROOT / '.env'}")

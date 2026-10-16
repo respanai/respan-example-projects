@@ -1,50 +1,54 @@
-from __future__ import annotations
-
-from _shared import (
-    example_attributes,
-    flush_and_shutdown,
-    make_client,
-    make_custom_identifier,
-    make_respan,
-    model_name,
-    print_result,
-    workflow_name,
-)
-from respan import workflow
-
-EXAMPLE_NAME = "stream-generate"
+from _shared import MODEL, client, run_case
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _stream_generate_workflow(prompt: str) -> str:
-    client = make_client()
+def action(provider):
+    frames = [
+        {"model": MODEL, "response": "x" * 10000, "thinking": "r" * 10000},
+        {
+            "model": MODEL,
+            "response": "",
+            "done": True,
+            "prompt_eval_count": 0,
+            "eval_count": 0,
+            "prompt_eval_cached_count": 0,
+        },
+    ]
+    c, body, _ = client(frames=frames)
     try:
-        chunks = client.generate(
-            model=model_name(),
-            prompt=prompt,
-            system="Be concise.",
-            stream=True,
+        chunks = list(
+            c.generate(
+                model=MODEL,
+                prompt="Controlled stream",
+                system="",
+                context=[],
+                raw=False,
+                think=True,
+                stream=True,
+            )
         )
-        return "".join(chunk["response"] for chunk in chunks)
+        assert (
+            len("".join(chunk.response or "" for chunk in chunks)) == 10000
+            and body.closed
+        )
     finally:
-        client.close()
-
-
-def run_stream_generate() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    text = ""
-
+        c._client.close()
+    c, body, _ = client(frames=frames)
     try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            print(f"custom_identifier={custom_identifier}", flush=True)
-            print(f"workflow_name={workflow_name(EXAMPLE_NAME)}", flush=True)
-            text = _stream_generate_workflow("Write a five word observability slogan.")
+        stream = c.generate(model=MODEL, prompt="Partial stream", stream=True)
+        next(stream)
+        stream.close()
+        assert body.closed
     finally:
-        flush_and_shutdown(respan)
-
-    print_result(EXAMPLE_NAME, custom_identifier, text)
+        c._client.close()
+    c, body, requests = client(frames=frames)
+    try:
+        stream = c.generate(model=MODEL, prompt="Unread stream", stream=True)
+        stream.close()
+        assert not requests and not body.reads
+    finally:
+        c._client.close()
+    return "full reasoning stream, partial close and pre-first close"
 
 
 if __name__ == "__main__":
-    run_stream_generate()
+    run_case("ollama_stream_generate", action)

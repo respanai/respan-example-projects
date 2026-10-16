@@ -1,355 +1,220 @@
+"""Controlled native SDK invocation; trace export requires an explicit opt-in."""
+
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
 
-import httpx
 from dotenv import load_dotenv
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan import Respan, propagate_attributes
 from respan_instrumentation_together import TogetherInstrumentor
-from together import AsyncTogether, Together
+from respan_tracing.exporters import RespanSpanExporter
+from respan_tracing.exporters.respan import _span_to_otlp_json
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = EXAMPLE_DIR.parents[2]
-DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
-DEFAULT_CHAT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
-DEFAULT_RERANK_MODEL = "Salesforce/Llama-Rank-v1"
-DEFAULT_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell-Free"
+REPO_ROOT = EXAMPLE_DIR.parents[2]
+EXAMPLE_SET = "together"
 
 
-def load_root_env() -> None:
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
+def run_id():
+    return os.getenv("RESPAN_EXAMPLE_RUN_ID", "together-local")
 
 
-def require_env(*names: str) -> str:
-    load_root_env()
-    for name in names:
-        value = os.getenv(name)
-        if value:
-            return value
-    raise RuntimeError(f"One of {', '.join(names)} must be set")
-
-
-def respan_api_key() -> str:
-    return require_env("RESPAN_API_KEY", "RESPAN_GATEWAY_API_KEY")
-
-
-def respan_base_url() -> str:
-    load_root_env()
-    return os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL).rstrip("/")
-
-
-def model_name() -> str:
-    return os.getenv("RESPAN_TOGETHER_MODEL", DEFAULT_CHAT_MODEL)
-
-
-def completion_model_name() -> str:
-    return os.getenv("RESPAN_TOGETHER_COMPLETION_MODEL", DEFAULT_CHAT_MODEL)
-
-
-def embedding_model_name() -> str:
-    return os.getenv("RESPAN_TOGETHER_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
-
-
-def rerank_model_name() -> str:
-    return os.getenv("RESPAN_TOGETHER_RERANK_MODEL", DEFAULT_RERANK_MODEL)
-
-
-def image_model_name() -> str:
-    return os.getenv("RESPAN_TOGETHER_IMAGE_MODEL", DEFAULT_IMAGE_MODEL)
-
-
-def _request_json(request: httpx.Request) -> dict[str, Any]:
+def create_respan(*, capture_content=True, marker=None):
+    export = os.getenv("RESPAN_EXAMPLE_EXPORT") == "1"
+    if export:
+        load_dotenv(REPO_ROOT / ".env", override=False)
+    # The facade reads this environment credential. Suppress its default export
+    # so local runs remain local even if the caller already has credentials.
+    api_key = os.environ.pop("RESPAN_API_KEY", None)
     try:
-        value = json.loads(request.content.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
-def _usage(prompt: int, completion: int) -> dict[str, int]:
-    return {
-        "prompt_tokens": prompt,
-        "completion_tokens": completion,
-        "total_tokens": prompt + completion,
-    }
-
-
-def _chat_response(payload: dict[str, Any]) -> dict[str, Any]:
-    messages = payload.get("messages") or []
-    tools = payload.get("tools") or []
-    has_tool_result = any(
-        isinstance(message, dict) and message.get("role") == "tool"
-        for message in messages
-    )
-    if tools and not has_tool_result:
-        message: dict[str, Any] = {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": "together-weather-1",
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "arguments": '{"city":"Tokyo"}',
-                    },
-                }
-            ],
-        }
-        finish_reason = "tool_calls"
-        completion = 12
-    elif has_tool_result:
-        message = {
-            "role": "assistant",
-            "content": "Tokyo is sunny and 22 C.",
-        }
-        finish_reason = "stop"
-        completion = 8
-    else:
-        message = {
-            "role": "assistant",
-            "content": "Together tracing keeps model calls observable.",
-        }
-        finish_reason = "stop"
-        completion = 7
-    return {
-        "id": "together-chat-deterministic",
-        "object": "chat.completion",
-        "created": 1_787_000_000,
-        "model": payload.get("model") or model_name(),
-        "choices": [
-            {
-                "index": 0,
-                "message": message,
-                "finish_reason": finish_reason,
-            }
-        ],
-        "usage": _usage(11, completion),
-    }
-
-
-def _stream_response(request: httpx.Request, payload: dict[str, Any]) -> httpx.Response:
-    chunks = [
-        {
-            "id": "together-stream-deterministic",
-            "object": "chat.completion.chunk",
-            "created": 1_787_000_000,
-            "model": payload.get("model") or model_name(),
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"role": "assistant", "content": "Trace data "},
-                    "finish_reason": None,
-                }
-            ],
-        },
-        {
-            "id": "together-stream-deterministic",
-            "object": "chat.completion.chunk",
-            "created": 1_787_000_000,
-            "model": payload.get("model") or model_name(),
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": "flows clearly."},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": _usage(9, 4),
-        },
-    ]
-    body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
-    body += "data: [DONE]\n\n"
-    return httpx.Response(
-        200,
-        headers={"content-type": "text/event-stream"},
-        text=body,
-        request=request,
-    )
-
-
-def _deterministic_response(
-    request: httpx.Request, *, error_status: int | None
-) -> httpx.Response:
-    if error_status is not None:
-        return httpx.Response(
-            error_status,
-            json={"error": {"message": "deterministic provider limit"}},
-            request=request,
+        respan = Respan(
+            api_key=None,
+            app_name="together-examples",
+            metadata={
+                "example_set": EXAMPLE_SET,
+                "example_run_id": marker or run_id(),
+                "run_id": marker or run_id(),
+            },
+            instrumentations=[TogetherInstrumentor(capture_content=capture_content)],
+            is_auto_instrument=False,
+            is_batching_enabled=False,
+            log_level="WARNING",
         )
-    payload = _request_json(request)
-    path = request.url.path
-    if path.endswith("/chat/completions"):
-        if payload.get("stream") is True:
-            return _stream_response(request, payload)
-        body = _chat_response(payload)
-    elif path.endswith("/completions"):
-        body = {
-            "id": "together-text-deterministic",
-            "object": "text_completion",
-            "created": 1_787_000_000,
-            "model": payload.get("model") or completion_model_name(),
-            "choices": [
-                {
-                    "index": 0,
-                    "text": "Completion tracing is deterministic.",
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": _usage(6, 5),
-        }
-    elif path.endswith("/embeddings"):
-        body = {
-            "object": "list",
-            "model": payload.get("model") or embedding_model_name(),
-            "data": [
-                {"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]},
-                {"object": "embedding", "index": 1, "embedding": [0.4, 0.5, 0.6]},
-            ],
-            "usage": _usage(4, 0),
-        }
-    elif path.endswith("/rerank"):
-        body = {
-            "id": "together-rerank-deterministic",
-            "model": payload.get("model") or rerank_model_name(),
-            "results": [
-                {
-                    "index": 1,
-                    "relevance_score": 0.98,
-                    "document": {"text": "Washington, D.C. is the capital."},
-                }
-            ],
-            "usage": _usage(7, 0),
-        }
-    elif path.endswith("/images/generations"):
-        body = {
-            "id": "together-image-deterministic",
-            "model": payload.get("model") or image_model_name(),
-            "data": [
-                {
-                    "index": 0,
-                    "type": "url",
-                    "url": "https://example.invalid/deterministic-image.png",
-                }
-            ],
-        }
-    else:
-        body = {"error": {"message": f"unhandled deterministic path {path}"}}
-        return httpx.Response(404, json=body, request=request)
-    return httpx.Response(200, json=body, request=request)
-
-
-def _live_mode() -> bool:
-    return os.getenv("RESPAN_TOGETHER_LIVE") == "1"
-
-
-def make_client(*, error_status: int | None = None) -> Together:
-    load_root_env()
-    if _live_mode() and error_status is None:
-        api_key = require_env("TOGETHER_API_KEY")
-        base_url = os.getenv("TOGETHER_BASE_URL")
-        return Together(api_key=api_key, base_url=base_url)
-    transport = httpx.MockTransport(
-        lambda request: _deterministic_response(request, error_status=error_status)
-    )
-    return Together(
-        api_key="deterministic-together-key",
-        base_url="https://together.invalid/v1",
-        http_client=httpx.Client(transport=transport),
-    )
-
-
-def make_async_client(*, error_status: int | None = None) -> AsyncTogether:
-    transport = httpx.MockTransport(
-        lambda request: _deterministic_response(request, error_status=error_status)
-    )
-    return AsyncTogether(
-        api_key="deterministic-together-key",
-        base_url="https://together.invalid/v1",
-        http_client=httpx.AsyncClient(transport=transport),
-    )
-
-
-def make_respan(example_name: str, marker: str) -> Respan:
-    return Respan(
-        api_key=respan_api_key(),
-        base_url=respan_base_url(),
-        app_name="together-examples",
-        instrumentations=[TogetherInstrumentor()],
-        environment=os.getenv("RESPAN_ENVIRONMENT", "example"),
-        metadata={
-            "integration": "together",
-            "example": example_name,
-            "run_id": marker,
-            "example_run_id": marker,
-        },
-    )
-
-
-def workflow_name(example_name: str) -> str:
-    return f"together_{example_name.replace('-', '_')}"
-
-
-def make_custom_identifier(example_name: str) -> str:
-    return (
-        os.getenv("RESPAN_EXAMPLE_RUN_ID")
-        or f"together-{example_name}-{uuid4().hex[:8]}"
-    )
+    finally:
+        if api_key is not None:
+            os.environ["RESPAN_API_KEY"] = api_key
+    respan.example_memory = InMemorySpanExporter()
+    respan.telemetry.add_processor(respan.example_memory, is_batching_enabled=False)
+    if export:
+        if not api_key:
+            raise RuntimeError("RESPAN_EXAMPLE_EXPORT=1 requires RESPAN_API_KEY")
+        respan.telemetry.add_processor(
+            RespanSpanExporter(
+                endpoint="https://api.respan.ai/api/v2/traces", api_key=api_key
+            ),
+            is_batching_enabled=False,
+        )
+    return respan
 
 
 @contextmanager
-def example_attributes(
-    example_name: str, custom_identifier: str | None = None
-) -> Iterator[str]:
-    marker = custom_identifier or make_custom_identifier(example_name)
-    current_workflow_name = workflow_name(example_name)
+def example_context(case):
+    with propagate_attributes(
+        custom_identifier=f"{EXAMPLE_SET}-{case}-{run_id()}",
+        trace_group_identifier=f"together_{case}",
+        metadata={
+            "example_set": EXAMPLE_SET,
+            "example_case": case,
+            "example_run_id": run_id(),
+            "run_id": run_id(),
+        },
+    ):
+        yield
+
+
+def finish_respan(respan):
+    try:
+        respan.flush()
+        directory = os.getenv("RESPAN_EXAMPLE_REPORT_DIR")
+        if directory:
+            path = Path(directory)
+            path.mkdir(parents=True, exist_ok=True)
+            import sys
+
+            (path / (Path(sys.argv[0]).stem + ".json")).write_text(
+                json.dumps(
+                    [
+                        _span_to_otlp_json(span)
+                        for span in respan.example_memory.get_finished_spans()
+                    ],
+                    indent=2,
+                )
+            )
+    finally:
+        respan.shutdown()
+        respan.telemetry.tracer.tracer_provider.shutdown()
+
+
+from uuid import uuid4
+
+import httpx
+from _fixtures import NativeRuntime
+from together import AsyncTogether, Together
+
+
+def load_root_env():
+    load_dotenv(REPO_ROOT / ".env", override=False)
+
+
+def model_name():
+    return os.getenv("RESPAN_TOGETHER_MODEL", "native-model")
+
+
+def completion_model_name():
+    return os.getenv("RESPAN_TOGETHER_COMPLETION_MODEL", model_name())
+
+
+def embedding_model_name():
+    return os.getenv("RESPAN_TOGETHER_EMBEDDING_MODEL", "native-embedding")
+
+
+def rerank_model_name():
+    return os.getenv("RESPAN_TOGETHER_RERANK_MODEL", "native-rerank")
+
+
+def image_model_name():
+    return os.getenv("RESPAN_TOGETHER_IMAGE_MODEL", "native-image")
+
+
+def make_custom_identifier(case):
+    return (
+        os.getenv("RESPAN_EXAMPLE_RUN_ID")
+        or "together-" + case + "-" + uuid4().hex[:12]
+    )
+
+
+def workflow_name(case):
+    return "together_" + case.replace("-", "_")
+
+
+def make_respan(case, marker):
+    return create_respan(marker=marker)
+
+
+def _runtime(error_status):
+    runtime = NativeRuntime()
+    if error_status is not None:
+
+        def respond(request):
+            return httpx.Response(
+                error_status,
+                json={"error": {"message": "controlled provider failure"}},
+                request=request,
+            )
+
+        runtime.respond = respond
+    return runtime
+
+
+def _live():
+    if os.getenv("RESPAN_TOGETHER_LIVE") != "1":
+        return None
+    load_root_env()
+    key = os.environ.get("TOGETHER_API_KEY")
+    if not key:
+        raise RuntimeError("RESPAN_TOGETHER_LIVE=1 requires TOGETHER_API_KEY")
+    if not os.environ.get("RESPAN_TOGETHER_MODEL"):
+        raise RuntimeError("Set RESPAN_TOGETHER_MODEL for the explicit live call")
+    return key
+
+
+def make_client(*, error_status=None):
+    key = _live() if error_status is None else None
+    return Together(api_key=key) if key else _runtime(error_status).client()
+
+
+def make_async_client(*, error_status=None):
+    key = _live() if error_status is None else None
+    return AsyncTogether(api_key=key) if key else _runtime(error_status).async_client()
+
+
+@contextmanager
+def example_attributes(case, custom_identifier=None):
+    marker = custom_identifier or make_custom_identifier(case)
     with propagate_attributes(
         custom_identifier=marker,
-        trace_group_identifier=current_workflow_name,
-        customer_identifier="together-example-user",
-        thread_identifier=f"{marker}-{example_name}",
+        trace_group_identifier=workflow_name(case),
         metadata={
-            "example": example_name,
-            "run_id": marker,
+            "example_set": EXAMPLE_SET,
+            "example_case": case,
             "example_run_id": marker,
-            "workflow_name": current_workflow_name,
-            "example_set": "together",
-            "client_mode": "live" if _live_mode() else "deterministic",
+            "run_id": marker,
         },
     ):
         yield marker
 
 
-def first_message_text(response: Any) -> str:
-    choices = getattr(response, "choices", None) or []
-    message = getattr(choices[0], "message", None) if choices else None
-    content = getattr(message, "content", None)
-    return content if isinstance(content, str) else ""
-
-
-def first_text_completion(response: Any) -> str:
-    choices = getattr(response, "choices", None) or []
-    text = getattr(choices[0], "text", None) if choices else None
-    return text if isinstance(text, str) else ""
-
-
-def print_start(example_name: str, marker: str) -> None:
-    print(f"example={example_name} marker={marker}", flush=True)
-
-
-def print_result(example_name: str, marker: str, result: Any) -> None:
-    print(
-        json.dumps(
-            {"example": example_name, "marker": marker, "result": result},
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-        flush=True,
+def first_message_text(response):
+    return (
+        response.choices[0].message.content
+        if response.choices
+        and response.choices[0].message
+        and response.choices[0].message.content is not None
+        else ""
     )
+
+
+def first_text_completion(response):
+    return response.choices[0].text if response.choices else ""
+
+
+def print_start(case, marker):
+    print(f"example={case} marker={marker}", flush=True)
+
+
+def print_result(case, marker, result):
+    print(json.dumps({"example": case, "marker": marker, "result": result}), flush=True)

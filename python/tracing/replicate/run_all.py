@@ -1,47 +1,36 @@
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
-EXAMPLES = [
-    "01_run_prediction.py",
-    "02_stream_prediction.py",
-    "03_async_run_prediction.py",
-    "04_prediction_lifecycle.py",
-    "05_expected_error.py",
-]
-TIMEOUT_SECONDS = 120
+SCRIPTS = tuple(p.name for p in sorted(Path(__file__).parent.glob("[0-9][0-9]_*.py")))
 
 
-def main() -> None:
-    base_dir = Path(__file__).resolve().parent
-    env = dict(os.environ)
-    env.setdefault(
-        "RESPAN_EXAMPLE_RUN_ID",
-        f"otel2-replicate-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
-    )
-    failures: list[str] = []
-    print(f"RESPAN_EXAMPLE_RUN_ID={env['RESPAN_EXAMPLE_RUN_ID']}", flush=True)
-    for script in EXAMPLES:
-        print(f"\n=== {script} ===", flush=True)
+def main():
+    root = Path(__file__).resolve().parent
+    env = {
+        **os.environ,
+        "RESPAN_EXAMPLE_RUN_ID": os.getenv("RESPAN_EXAMPLE_RUN_ID")
+        or "replicate-" + uuid4().hex,
+    }
+    failed = []
+    for script in SCRIPTS:
+        print(script, flush=True)
         try:
             result = subprocess.run(
-                [sys.executable, str(base_dir / script)],
-                cwd=base_dir,
+                [sys.executable, str(root / script)],
+                cwd=root,
                 env=env,
-                timeout=TIMEOUT_SECONDS,
                 check=False,
+                timeout=60,
             )
+            if result.returncode:
+                failed.append(script)
         except subprocess.TimeoutExpired:
-            failures.append(f"{script}: timed out")
-            continue
-        if result.returncode:
-            failures.append(f"{script}: exit {result.returncode}")
-    if failures:
-        raise SystemExit("; ".join(failures))
+            failed.append(script + " timeout")
+    if failed:
+        raise SystemExit("; ".join(failed))
 
 
 if __name__ == "__main__":

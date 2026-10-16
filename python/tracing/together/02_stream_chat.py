@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from _shared import (
     example_attributes,
+    finish_respan,
     make_client,
     make_custom_identifier,
     make_respan,
@@ -49,7 +50,7 @@ def run_stream_chat() -> None:
                 "Stream a short sentence about observable trace data."
             )
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 

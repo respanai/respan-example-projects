@@ -3,6 +3,7 @@ from __future__ import annotations
 from _shared import (
     completion_model_name,
     example_attributes,
+    finish_respan,
     first_text_completion,
     make_client,
     make_custom_identifier,
@@ -40,7 +41,7 @@ def run_text_completion() -> None:
                 "Complete this sentence in under ten words: Tracing AI calls helps"
             )
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 

@@ -1,4 +1,7 @@
-replicate>=1.0.0,<2.0.0
-respan-ai>=4,<5
-respan-instrumentation-replicate>=0.1.0,<0.2.0
+replicate>=1.0.0,<2
+httpx>=0.28,<0.29
+respan-tracing>=2.17,<3
+respan-sdk>=2.6.26
+opentelemetry-semantic-conventions-ai>=0.5.1,<0.6
+respan-instrumentation-replicate>=0.1.0,<0.2
 python-dotenv>=1,<2

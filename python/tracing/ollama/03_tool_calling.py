@@ -1,87 +1,60 @@
-from __future__ import annotations
-
-from typing import Any
-
-from _shared import (
-    example_attributes,
-    flush_and_shutdown,
-    make_client,
-    make_custom_identifier,
-    make_respan,
-    model_name,
-    print_result,
-    response_message_content,
-    response_tool_calls,
-    tool_call_arguments,
-    tool_call_name,
-    workflow_name,
-)
-from respan import tool, workflow
-
-EXAMPLE_NAME = "tool-calling"
+from _shared import MODEL, client, run_case
 
 
-@tool(name="get_weather")
-def get_weather(city: str) -> str:
-    """Return deterministic weather for a city."""
-    return f"sunny and 22 C in {city}"
+def weather(city: str) -> str:
+    """Return controlled weather for a city."""
+    return f"Sunny in {city}"
 
 
-_TOOLS = [get_weather]
-
-
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _tool_calling_workflow(city: str) -> str:
-    client = make_client()
+def action(provider):
+    payload = {
+        "model": MODEL,
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "thinking": "Select weather tool",
+            "tool_calls": [
+                {"function": {"name": "weather", "arguments": {"city": "Tokyo"}}}
+            ],
+        },
+        "done": True,
+    }
+    c, _, _ = client(payload)
     try:
-        messages: list[dict[str, Any]] = [
+        response = c.chat(
+            model=MODEL,
+            messages=[{"role": "user", "content": "Weather?"}],
+            tools=[weather],
+        )
+        call = response.message.tool_calls[0]
+        assert call.function.name == "weather"
+        history = [
+            {"role": "user", "content": "Weather?"},
+            response.message.model_dump(exclude_none=True),
             {
-                "role": "user",
-                "content": f"Use the weather tool for {city} and answer briefly.",
-            }
+                "role": "tool",
+                "tool_name": "weather",
+                "content": weather(**call.function.arguments),
+            },
         ]
-        first_response = client.chat(
-            model=model_name(), messages=messages, tools=_TOOLS
-        )
-        tool_calls = response_tool_calls(first_response)
-        if not tool_calls:
-            return response_message_content(first_response)
-
-        messages.append(
-            {
-                "role": "assistant",
-                "content": response_message_content(first_response),
-                "tool_calls": tool_calls,
-            }
-        )
-        for tool_call in tool_calls:
-            name = tool_call_name(tool_call)
-            arguments = tool_call_arguments(tool_call)
-            if name == "get_weather":
-                result = get_weather(**arguments)
-                messages.append({"role": "tool", "tool_name": name, "content": result})
-
-        final_response = client.chat(model=model_name(), messages=messages)
-        return response_message_content(final_response)
     finally:
-        client.close()
-
-
-def run_tool_calling() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    text = ""
-
+        c._client.close()
+    c, _, _ = client()
     try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            print(f"custom_identifier={custom_identifier}", flush=True)
-            print(f"workflow_name={workflow_name(EXAMPLE_NAME)}", flush=True)
-            text = _tool_calling_workflow("Tokyo")
+        assert c.chat(model=MODEL, messages=history).message.content
     finally:
-        flush_and_shutdown(respan)
-
-    print_result(EXAMPLE_NAME, custom_identifier, text)
+        c._client.close()
+    c, body, _ = client(frames=[payload])
+    try:
+        chunks = list(c.chat(model=MODEL, messages=[], tools=[weather], stream=True))
+        assert len(chunks) == 1 and chunks[0].message.tool_calls
+        assert body.closed
+    finally:
+        c._client.close()
+    return (
+        "native callable tool schema, historical result and current streamed tool call"
+    )
 
 
 if __name__ == "__main__":
-    run_tool_calling()
+    run_case("ollama_tool_calling", action)

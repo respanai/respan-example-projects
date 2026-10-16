@@ -1,52 +1,75 @@
-from __future__ import annotations
+"""Run actual released SDK examples and inspect their native OTel spans."""
 
-import ast
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
-EXAMPLE_DIR = Path(__file__).resolve().parent
 
-
-def test_runner_covers_all_examples_and_aggregates_failures() -> None:
-    source = (EXAMPLE_DIR / "run_all.py").read_text()
-    tree = ast.parse(source)
-    assignment = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "EXAMPLES"
-            for target in node.targets
+def test_actual_examples_full_payloads_errors_privacy_and_connected_trees(tmp_path):
+    root = Path(__file__).resolve().parent
+    env = {
+        **os.environ,
+        "RESPAN_EXAMPLE_EXPORT": "0",
+        "RESPAN_EXAMPLE_RUN_ID": "replicate-contract",
+        "RESPAN_EXAMPLE_REPORT_DIR": str(tmp_path),
+    }
+    result = subprocess.run(
+        [sys.executable, str(root / "run_all.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    reports = {
+        path.stem: json.loads(path.read_text()) for path in tmp_path.glob("*.json")
+    }
+    assert len(reports) == 9
+    assert sum(len(report["spans"]) for report in reports.values()) == 45
+    for report in reports.values():
+        assert report["run_id"] == "replicate-contract"
+        spans = report["spans"]
+        assert len({span["trace_id"] for span in spans}) == 1
+        ids = {span["span_id"] for span in spans}
+        assert all(
+            span["parent_span_id"] is None or span["parent_span_id"] in ids
+            for span in spans
         )
+        assert sum(span["parent_span_id"] is None for span in spans) == 1
+    vector = reports["full_payloads"]["spans"][0]["attributes"]
+    assert len(json.loads(vector["traceloop.entity.output"])) == 5001
+    assert (
+        len(json.loads(vector["traceloop.entity.input"])["kwargs"]["input"]["messages"])
+        == 75
     )
-    assert ast.literal_eval(assignment.value) == sorted(
-        path.name for path in EXAMPLE_DIR.glob("[0-9][0-9]_*.py")
-    )
-    assert "TimeoutExpired" in source
-    assert "failures" in source
-
-
-def test_workflows_accept_semantic_values_not_clients() -> None:
-    for path in EXAMPLE_DIR.glob("[0-9][0-9]_*.py"):
-        tree = ast.parse(path.read_text())
-        workflows = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-            and any(
-                isinstance(decorator, ast.Call)
-                and getattr(decorator.func, "id", None) == "workflow"
-                for decorator in node.decorator_list
+    assert "controlled-secret" not in json.dumps(vector)
+    assert (
+        len(
+            json.loads(
+                reports["streaming"]["spans"][0]["attributes"][
+                    "traceloop.entity.output"
+                ]
             )
-        ]
-        assert workflows
-        for function in workflows:
-            names = [argument.arg for argument in function.args.args]
-            assert names
-            assert "client" not in names
-
-
-def test_marker_and_live_mode_are_explicit() -> None:
-    shared = (EXAMPLE_DIR / "_shared.py").read_text()
-    assert "override=False" in shared
-    assert "example_run_id" in shared
-    assert "RESPAN_REPLICATE_LIVE" in shared
+        )
+        == 251
+    )
+    errors = reports["provider_errors"]["spans"][:2]
+    assert [span["attributes"]["http.response.status_code"] for span in errors] == [
+        429,
+        201,
+    ]
+    assert all(
+        span["status"] == "ERROR"
+        and "traceloop.entity.output" not in span["attributes"]
+        for span in errors
+    )
+    private = reports["privacy"]["spans"][:2]
+    assert all(
+        "traceloop.entity.input" not in span["attributes"]
+        and "traceloop.entity.output" not in span["attributes"]
+        for span in private
+    )
+    assert "PRIVATE" not in json.dumps(private)

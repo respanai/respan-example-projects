@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from _shared import (
     example_attributes,
+    finish_respan,
     make_client,
     make_custom_identifier,
     make_respan,
@@ -46,7 +47,7 @@ def run_rerank() -> None:
             print_start(EXAMPLE_NAME, custom_identifier)
             text = _rerank_workflow("Which document is about observability?")
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 

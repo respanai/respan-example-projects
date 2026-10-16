@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from _shared import (
     example_attributes,
+    finish_respan,
     image_model_name,
     make_client,
     make_custom_identifier,
@@ -25,7 +26,7 @@ def _image_generation_workflow(prompt: str) -> str:
             width=256,
             height=256,
             steps=4,
-            response_format="url",
+            response_format="b64_json",
         )
         data = getattr(response, "data", None) or []
         if not data:
@@ -47,7 +48,7 @@ def run_image_generation() -> None:
                 "A small line-art observability dashboard icon"
             )
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 

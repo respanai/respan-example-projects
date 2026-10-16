@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from _shared import (
     example_attributes,
+    finish_respan,
     first_message_text,
     make_client,
     make_custom_identifier,
@@ -40,7 +41,7 @@ def run_chat_completion() -> None:
                 "Reply with one concise sentence about tracing Together AI apps."
             )
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 
