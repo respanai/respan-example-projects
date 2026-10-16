@@ -1,174 +1,214 @@
+import assert from "node:assert/strict";
+import http from "node:http";
+import { writeFile } from "node:fs/promises";
+import { context } from "@opentelemetry/api";
+import { CONTEXT_KEY_ALLOW_TRACE_CONTENT } from "@traceloop/ai-semantic-conventions";
 import { BraintrustInstrumentor } from "@respan/instrumentation-braintrust";
 import { Respan } from "@respan/respan";
-import dotenv from "dotenv";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
 
-const DEFAULT_BASE_URL = "https://api.respan.ai/api";
-
+// Explicit fixture settings prevent native SDK environment-file discovery.
+process.env.BRAINTRUST_ENVIRONMENT_TYPE = "development";
+process.env.BRAINTRUST_ENVIRONMENT_NAME = "respan-fixture";
+export const bt = await import("braintrust");
 export const EXAMPLE_RUN_ID =
   process.env.RESPAN_EXAMPLE_RUN_ID ?? `braintrust-ts-${Date.now()}`;
-export const EXAMPLE_MODEL =
-  process.env.BRAINTRUST_EXAMPLE_MODEL ?? process.env.RESPAN_MODEL ?? "gpt-4.1-nano";
+export const MODEL = "fixture-model";
+export const tools = Array.from({ length: 82 }, (_, index) => ({
+  type: "function" as const,
+  function: {
+    name: `tool_${index}`,
+    description: `Fixture tool ${index}`,
+    parameters: { type: "object", properties: { value: { type: "number" } } },
+  },
+}));
+export const messages: OpenAI.ChatCompletionMessageParam[] = Array.from(
+  { length: 80 },
+  (_, index) => ({
+    role: "user" as const,
+    content: [
+      { type: "text" as const, text: `Fixture message ${index}` },
+      {
+        type: "image_url" as const,
+        image_url: { url: `data:image/png;base64,fixture${index}` },
+      },
+    ],
+  }),
+);
 
-let rootEnvLoaded = false;
-let respanLogsSuppressed = false;
-const originalConsoleDebug = console.debug.bind(console);
-const originalConsoleInfo = console.info.bind(console);
-const originalConsoleLog = console.log.bind(console);
-
-function suppressExampleRespanLogs(): void {
-  if (respanLogsSuppressed || process.env.RESPAN_EXAMPLE_DEBUG === "true") {
-    return;
+if (process.env.RESPAN_EXAMPLE_DEBUG !== "1") {
+  for (const method of ["debug", "info", "log"] as const) {
+    const original = console[method].bind(console);
+    console[method] = (...args: unknown[]) => {
+      if (typeof args[0] === "string" && args[0].startsWith("[Respan")) return;
+      original(...args);
+    };
   }
-
-  console.debug = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("[Respan Debug]")) {
-      return;
-    }
-    originalConsoleDebug(...args);
-  };
-
-  console.info = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]")) {
-      return;
-    }
-    originalConsoleInfo(...args);
-  };
-
-  console.log = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("Respan tracing")) {
-      return;
-    }
-    originalConsoleLog(...args);
-  };
-
-  respanLogsSuppressed = true;
 }
 
-export function loadRootEnv(): void {
-  if (rootEnvLoaded) {
-    return;
-  }
-
-  const startDir = dirname(fileURLToPath(import.meta.url));
-  let currentDir = startDir;
-
-  for (let depth = 0; depth < 8; depth += 1) {
-    const envPath = join(currentDir, ".env");
-    if (existsSync(envPath)) {
-      dotenv.config({ path: envPath, override: false, quiet: true });
-      rootEnvLoaded = true;
-      return;
+export async function runScenario(
+  name: string,
+  fn: (
+    logger: ReturnType<typeof bt.initLogger>,
+    client: ReturnType<typeof bt.wrapOpenAI<OpenAI>>,
+    instrumentor: BraintrustInstrumentor,
+  ) => Promise<unknown>,
+): Promise<void> {
+  const captured: any[] = [];
+  let base = "";
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+    res.setHeader("content-type", "application/json");
+    if (Array.isArray(body.resourceSpans)) {
+      for (const resource of body.resourceSpans)
+        for (const scope of resource.scopeSpans ?? [])
+          for (const span of scope.spans ?? [])
+            captured.push({ ...span, scope: scope.scope });
+      return res.end("{}");
     }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) {
-      break;
+    if (req.url === "/api/apikey/login")
+      return res.end(
+        JSON.stringify({
+          org_info: [{ id: "fixture-org", name: "fixture", api_url: base }],
+        }),
+      );
+    if (req.url?.startsWith("/api/project"))
+      return res.end(
+        JSON.stringify({ id: "fixture-project", name: "fixture", project: {} }),
+      );
+    if (req.url !== "/v1/chat/completions") {
+      res.statusCode = 404;
+      return res.end("{}");
     }
-    currentDir = parentDir;
-  }
-
-  dotenv.config({ override: false, quiet: true });
-  rootEnvLoaded = true;
-}
-
-export function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required. Add it to respan-example-projects/.env.`);
-  }
-  return value;
-}
-
-export function createOpenAIClient(): OpenAI {
-  loadRootEnv();
-  const respanApiKey = process.env.RESPAN_GATEWAY_API_KEY ?? requireEnv("RESPAN_API_KEY");
-  const baseURL = process.env.RESPAN_GATEWAY_BASE_URL ?? process.env.RESPAN_BASE_URL ?? DEFAULT_BASE_URL;
-
-  return new OpenAI({
-    apiKey: respanApiKey,
-    baseURL,
+    if (body.model === "fixture-error") {
+      res.statusCode = 400;
+      return res.end(
+        JSON.stringify({
+          error: {
+            message: "Controlled fixture error",
+            type: "invalid_request_error",
+          },
+        }),
+      );
+    }
+    if (body.stream) {
+      res.setHeader("content-type", "text/event-stream");
+      for (const [index, content] of ["Fixture", " stream"].entries())
+        res.write(
+          `data: ${JSON.stringify({ id: "fixture-stream", object: "chat.completion.chunk", created: 1, model: MODEL, choices: [{ index: 0, delta: { ...(index === 0 ? { role: "assistant" } : {}), content }, finish_reason: index === 1 ? "stop" : null }], ...(index === 1 ? { usage: { prompt_tokens: 0, completion_tokens: 2, total_tokens: 9 } } : {}) })}\n\n`,
+        );
+      return res.end("data: [DONE]\n\n");
+    }
+    res.end(
+      JSON.stringify({
+        id: "fixture-chat",
+        object: "chat.completion",
+        created: 1,
+        model: MODEL,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: "Fixture answer",
+              tool_calls: [
+                {
+                  id: "call_fixture",
+                  type: "function",
+                  function: { name: "tool_81", arguments: '{"value":0}' },
+                },
+              ],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 17 },
+      }),
+    );
   });
-}
-
-export function createRuntime(): { respan: Respan; instrumentor: BraintrustInstrumentor } {
-  loadRootEnv();
-  suppressExampleRespanLogs();
-
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const instrumentor = new BraintrustInstrumentor();
+  const exporting = process.env.RESPAN_EXAMPLE_EXPORT === "1";
+  if (exporting && !process.env.RESPAN_API_KEY)
+    throw new Error(
+      "RESPAN_EXAMPLE_EXPORT=1 requires RESPAN_API_KEY in the process environment",
+    );
   const respan = new Respan({
-    apiKey: requireEnv("RESPAN_API_KEY"),
-    baseURL: process.env.RESPAN_BASE_URL,
+    apiKey: exporting ? process.env.RESPAN_API_KEY : "fixture-only",
+    baseURL: exporting ? process.env.RESPAN_BASE_URL : base,
     appName: "braintrust-typescript-examples",
-    instrumentations: [instrumentor],
     silenceInitializationMessage: true,
+    logLevel: "error",
+    instrumentations: [instrumentor],
   });
-
-  return { respan, instrumentor };
-}
-
-export async function runWithBraintrustWorkflow<T>(
-  respan: Respan,
-  workflowName: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const { entityWorkflowName, traceWorkflowName } = normalizeWorkflowName(workflowName);
-  await respan.initialize();
   try {
-    return await respan.propagateAttributes(
+    await respan.initialize();
+    const logger = bt.initLogger({
+      projectId: "00000000-0000-4000-8000-000000000001",
+      projectName: "fixture",
+      apiKey: "fixture-only",
+      appUrl: base,
+    });
+    const client = bt.wrapOpenAI(
+      new OpenAI({
+        apiKey: "fixture-only",
+        baseURL: `${base}/v1`,
+        maxRetries: 0,
+      }),
+    );
+    const result = await respan.propagateAttributes(
       {
         custom_identifier: EXAMPLE_RUN_ID,
-        trace_group_identifier: traceWorkflowName,
+        trace_group_identifier: `${EXAMPLE_RUN_ID}.${name}`,
         metadata: {
-          example: "braintrust-typescript",
           run_id: EXAMPLE_RUN_ID,
-          workflow_name: traceWorkflowName,
+          example: "braintrust-typescript",
+          scenario: name,
         },
       },
-      () => respan.withWorkflow({ name: entityWorkflowName }, fn),
+      () =>
+        respan.withWorkflow({ name: `braintrust-${name}` }, async () => {
+          try {
+            return await fn(logger, client, instrumentor);
+          } finally {
+            await logger.flush();
+            await instrumentor.flush();
+          }
+        }),
+    );
+    await respan.flush();
+    if (process.env.RESPAN_EXAMPLE_CAPTURE)
+      await writeFile(
+        process.env.RESPAN_EXAMPLE_CAPTURE,
+        JSON.stringify(
+          { runId: EXAMPLE_RUN_ID, scenario: name, spans: captured },
+          null,
+          2,
+        ),
+      );
+    console.log(
+      JSON.stringify({
+        runId: EXAMPLE_RUN_ID,
+        scenario: name,
+        spans: captured.length,
+        exporting,
+        result,
+      }),
     );
   } finally {
+    await instrumentor.deactivate();
+    await respan.shutdown();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
 
-export function getTraceWorkflowName(workflowName: string): string {
-  return normalizeWorkflowName(workflowName).traceWorkflowName;
+export async function withoutContent<T>(fn: () => Promise<T>): Promise<T> {
+  return context.with(
+    context.active().setValue(CONTEXT_KEY_ALLOW_TRACE_CONTENT, false),
+    fn,
+  );
 }
-
-export function logExampleResult(
-  workflowName: string,
-  details: Record<string, unknown>,
-): void {
-  console.log(JSON.stringify({
-    workflowName: getTraceWorkflowName(workflowName),
-    runId: EXAMPLE_RUN_ID,
-    ...details,
-  }, null, 2));
-}
-
-export function secondsAgo(offset: number): number {
-  return Date.now() / 1000 - offset;
-}
-
-export function rowId(name: string): string {
-  return `${EXAMPLE_RUN_ID}-${name}`;
-}
-
-function normalizeWorkflowName(workflowName: string): {
-  entityWorkflowName: string;
-  traceWorkflowName: string;
-} {
-  const suffix = ".workflow";
-  const entityWorkflowName = workflowName.endsWith(suffix)
-    ? workflowName.slice(0, -suffix.length)
-    : workflowName;
-  return {
-    entityWorkflowName,
-    traceWorkflowName: `${entityWorkflowName}${suffix}`,
-  };
-}
+export { assert };

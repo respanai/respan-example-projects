@@ -1,0 +1,34 @@
+{
+  "name": "respan-openinference-typescript-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "all": "tsx run_all.ts",
+    "01:helpers": "tsx run_all.ts 1",
+    "02:llm": "tsx run_all.ts 2",
+    "03:retrieval": "tsx run_all.ts 3",
+    "04:openai": "tsx run_all.ts 4",
+    "05:privacy": "tsx run_all.ts 5",
+    "06:kinds": "tsx run_all.ts 6",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@arizeai/openinference-core": "2.8.0",
+    "@arizeai/openinference-instrumentation-openai": "4.4.1",
+    "@arizeai/openinference-semantic-conventions": "2.14.0",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/sdk-trace-base": "2.10.0",
+    "@respan/instrumentation-openinference": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-openinference",
+    "@respan/respan": "2.5.0",
+    "@respan/tracing": "1.6.1",
+    "@respan/respan-sdk": "1.3.4",
+    "@traceloop/ai-semantic-conventions": "0.27.0",
+    "openai": "7.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

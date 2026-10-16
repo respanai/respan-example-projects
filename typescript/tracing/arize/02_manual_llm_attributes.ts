@@ -3,7 +3,12 @@ import {
   getLLMAttributes,
   withSpan,
 } from "@arizeai/phoenix-otel";
-import { createRespan, logExampleResult, runWithArizeWorkflow } from "./_shared.js";
+import {
+  createRespan,
+  finishRespan,
+  logExampleResult,
+  runWithArizeWorkflow,
+} from "./_shared.js";
 
 const answerWithSyntheticModel = withSpan(
   async (question: string) => ({
@@ -28,7 +33,7 @@ const answerWithSyntheticModel = withSpan(
         tokenCount: output.tokenCount,
         invocationParameters: {
           temperature: 0.1,
-          maxTokens: 128,
+          max_tokens: 128,
         },
       }),
   },
@@ -50,12 +55,16 @@ const respan = createRespan();
 
 try {
   const result = await runWithArizeWorkflow(respan, workflowName, async () => {
-    const classification = await classifyRequest({ text: "trace Arize helper spans" });
-    const llm = await answerWithSyntheticModel("Explain Respan and Arize helper tracing.");
+    const classification = await classifyRequest({
+      text: "trace Arize helper spans",
+    });
+    const llm = await answerWithSyntheticModel(
+      "Explain Respan and Arize helper tracing.",
+    );
     return { classification, llm };
   });
 
   logExampleResult(workflowName, result);
 } finally {
-  await respan.shutdown();
+  await finishRespan(respan);
 }

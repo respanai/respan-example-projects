@@ -1,5 +1,10 @@
 import { OpenInferenceSpanKind, observe } from "@arizeai/phoenix-otel";
-import { createRespan, logExampleResult, runWithArizeWorkflow } from "./_shared.js";
+import {
+  createRespan,
+  finishRespan,
+  logExampleResult,
+  runWithArizeWorkflow,
+} from "./_shared.js";
 
 class SupportPlanner {
   @observe({ name: "arize.observed_plan", kind: OpenInferenceSpanKind.CHAIN })
@@ -26,7 +31,9 @@ const respan = createRespan();
 try {
   const result = await runWithArizeWorkflow(respan, workflowName, async () => {
     const planner = new SupportPlanner();
-    return await planner.answer("How do decorators create OpenInference spans?");
+    return await planner.answer(
+      "How do decorators create OpenInference spans?",
+    );
   });
 
   logExampleResult(workflowName, {
@@ -34,5 +41,5 @@ try {
     stepCount: result.plan.steps.length,
   });
 } finally {
-  await respan.shutdown();
+  await finishRespan(respan);
 }

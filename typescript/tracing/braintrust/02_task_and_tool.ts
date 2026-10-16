@@ -1,69 +1,52 @@
-import {
-  createRuntime,
-  logExampleResult,
-  rowId,
-  runWithBraintrustWorkflow,
-  secondsAgo,
-} from "./_shared.js";
+import { assert, runScenario } from "./_shared.js";
 
-const workflowName = "Braintrust TypeScript Task Tool";
-const { respan, instrumentor } = createRuntime();
-
-function lookupCityNotes(city: string): { city: string; notes: string[] } {
-  return {
-    city,
-    notes: [
-      "Use compact bullet points.",
-      "Mention one landmark and one food detail.",
-    ],
-  };
-}
-
-const result = await runWithBraintrustWorkflow(respan, workflowName, async () => {
-  const taskSpanId = rowId("city-brief-task-span");
-  const rootSpanId = rowId("city-brief-root");
-  const toolOutput = lookupCityNotes("Kyoto");
-  const brief = "Kyoto: Fushimi Inari is iconic; yudofu is a calm local food pick.";
-
-  instrumentor.exportRecord({
-    id: rowId("city-brief-task"),
-    project_id: "respan-example",
-    log_id: "g",
-    span_id: taskSpanId,
-    root_span_id: rootSpanId,
-    created: new Date().toISOString(),
-    span_attributes: {
-      type: "task",
-      name: "braintrust.plan_city_brief",
+await runScenario("task-tool-and-vector", async (logger) =>
+  logger.traced(
+    async (parent) => {
+      const tool = await parent.traced(
+        async (span) => {
+          const result = { city: "Kyoto", value: 0 };
+          span.log({
+            output: result,
+            scores: { useful: 0 },
+            tags: ["tool", "fixture"],
+          });
+          return result;
+        },
+        {
+          name: "lookup_city_notes",
+          type: "tool",
+          event: {
+            input: { city: "Kyoto", value: 0 },
+            metadata: { tool_call_id: "call_fixture" },
+          },
+        },
+      );
+      assert.equal(tool.value, 0);
+      const vector = Array.from({ length: 5001 }, (_, index) => index / 10);
+      await parent.traced(async (span) => span.log({ output: vector }), {
+        name: "native-embedding",
+        spanAttributes: { type: "embedding" },
+        event: {
+          input: ["Kyoto"],
+          metadata: { model: "fixture-embedding" },
+          metrics: { prompt_tokens: 0, tokens: 0 },
+        },
+      });
+      for (const value of [false, 0, "", null, [], {}])
+        await parent.traced(
+          async (span) => span.log({ input: value, output: value }),
+          { name: "native-scalar", type: "task" },
+        );
+      return { tool, vectorLength: vector.length, scalarCases: 6 };
     },
-    input: { city: "Kyoto", format: "one sentence" },
-    output: { brief },
-    metrics: { start: secondsAgo(3), end: secondsAgo(1) },
-    metadata: { feature: "task" },
-    tags: ["braintrust", "task"],
-  });
-
-  instrumentor.exportRecord({
-    id: rowId("city-notes-tool"),
-    project_id: "respan-example",
-    log_id: "g",
-    span_id: rowId("city-notes-tool-span"),
-    root_span_id: rootSpanId,
-    span_parents: [taskSpanId],
-    created: new Date().toISOString(),
-    span_attributes: {
-      type: "tool",
-      name: "lookup_city_notes",
+    {
+      name: "city-agent",
+      spanAttributes: { type: "agent" },
+      event: {
+        input: { city: "Kyoto" },
+        metadata: { feature: "native-agent" },
+      },
     },
-    input: { name: "lookup_city_notes", arguments: { city: "Kyoto" } },
-    output: toolOutput,
-    metrics: { start: secondsAgo(2), end: secondsAgo(1.5) },
-    metadata: { feature: "tool" },
-    scores: { useful: 1 },
-    tags: ["braintrust", "tool"],
-  });
-
-  return { brief, toolOutput };
-});
-
-logExampleResult(workflowName, result);
+  ),
+);
