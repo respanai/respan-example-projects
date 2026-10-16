@@ -1,4 +1,4 @@
-restate-sdk>=1.0.0,<2.0.0
+restate-sdk>=1.0.1,<2.0.0
 respan-ai>=4,<5
 respan-instrumentation-restate>=0.1.0,<0.2.0
 python-dotenv>=1,<2

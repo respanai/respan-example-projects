@@ -2,9 +2,8 @@
 
 import asyncio
 
-from burr.core import ApplicationBuilder, State, action
-
 from _shared import create_respan, new_run_id, print_trace_lookup, workflow_context
+from burr.core import ApplicationBuilder, State, action
 
 WORKFLOW_NAME = "Burr Async Workflow"
 EXAMPLE_NAME = "05_async_workflow"
@@ -25,7 +24,7 @@ async def main() -> None:
     )
     app = (
         ApplicationBuilder()
-        .with_identifiers(app_id="async-app", partition_key="user-async")
+        .with_identifiers(app_id=f"{run_id}:{EXAMPLE_NAME}", partition_key="user-async")
         .with_actions(double_value)
         .with_entrypoint("double_value")
         .with_state(value=21)

@@ -2,10 +2,15 @@
 
 import asyncio
 
-from _shared import create_respan, finish_respan, marker, temporal_id
+from _shared import (
+    create_environment,
+    create_respan,
+    finish_respan,
+    marker,
+    temporal_id,
+)
 from _workflows import GreetingWorkflow, compose_greeting
 from respan import propagate_attributes
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 
@@ -13,9 +18,7 @@ async def main() -> None:
     respan, instrumentor = create_respan("runtime-success")
     try:
         async with (
-            await WorkflowEnvironment.start_time_skipping(
-                interceptors=[instrumentor.interceptor]
-            ) as environment,
+            await create_environment(instrumentor) as environment,
             Worker(
                 environment.client,
                 task_queue="respan-temporal-success",
@@ -38,6 +41,7 @@ async def main() -> None:
                     id=temporal_id("success"),
                     task_queue="respan-temporal-success",
                 )
+            assert result == "Hello, Ada!"
             print({"result": result})
     finally:
         finish_respan(respan)

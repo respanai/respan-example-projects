@@ -2,11 +2,16 @@
 
 import asyncio
 
-from _shared import create_respan, finish_respan, marker, temporal_id
+from _shared import (
+    create_environment,
+    create_respan,
+    finish_respan,
+    marker,
+    temporal_id,
+)
 from _workflows import FailingWorkflow, fail_once
 from respan import propagate_attributes
 from temporalio.client import WorkflowFailureError
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 
@@ -14,9 +19,7 @@ async def main() -> None:
     respan, instrumentor = create_respan("runtime-failure")
     try:
         async with (
-            await WorkflowEnvironment.start_time_skipping(
-                interceptors=[instrumentor.interceptor]
-            ) as environment,
+            await create_environment(instrumentor) as environment,
             Worker(
                 environment.client,
                 task_queue="respan-temporal-failure",
