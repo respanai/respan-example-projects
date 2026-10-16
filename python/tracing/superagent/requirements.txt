@@ -1,4 +1,4 @@
 python-dotenv>=1.0,<2
-respan-ai>=4,<5
+respan-ai>=4.2.3,<5
 respan-instrumentation-superagent>=0.1,<1
-safety-agent>=0.1.5,<1
+safety-agent==0.1.7

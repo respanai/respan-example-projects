@@ -24,8 +24,9 @@ def calculate_invoice_total(unit_price_usd: int, quantity: int) -> str:
 def execute_tool_calling_agent_workflow(prompt: str) -> str:
     agent = ToolCallingAgent(
         tools=[calculate_invoice_total],
-        model=build_model(),
+        model=build_model("invoice"),
         max_steps=3,
+        verbosity_level=0,
     )
     result = agent.run(prompt)
     print(result)

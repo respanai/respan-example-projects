@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SCRIPTS = tuple(sorted(ROOT.glob("0[1-4]_*.py")))
+SCRIPTS = tuple(sorted(ROOT.glob("[0-1][0-9]_*.py")))
 
 
 def _source(path: Path) -> str:
@@ -52,3 +52,10 @@ def test_requirements_are_registry_portable() -> None:
     requirements = _source(ROOT / "requirements.txt")
     assert " -e " not in requirements
     assert "file:" not in requirements
+
+
+def test_fixture_mode_is_default_and_live_model_is_explicit() -> None:
+    shared = _source(ROOT / "_shared.py")
+    assert 'os.getenv("SMOLAGENTS_MODEL_MODE", "fixture")' in shared
+    assert 'if mode != "live"' in shared
+    assert len(SCRIPTS) == 10

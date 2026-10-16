@@ -14,6 +14,11 @@ EXAMPLES = (
     "02_chat_model.py",
     "03_tool_execution.py",
     "04_expected_error.py",
+    "05_streaming.py",
+    "06_embedding.py",
+    "07_tool_calls.py",
+    "08_workflow_structured.py",
+    "09_privacy.py",
 )
 
 
@@ -33,6 +38,7 @@ def main() -> None:
             failures.append(example)
     if failures:
         raise SystemExit(f"BeeAI examples failed: {', '.join(failures)}")
+    print(f"Completed {len(EXAMPLES)} BeeAI scenarios")
     print(f"RESPAN_EXAMPLE_RUN_ID={env['RESPAN_EXAMPLE_RUN_ID']}")
 
 

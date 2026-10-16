@@ -1,61 +1,43 @@
-"""Trace a Superagent repository scan when Daytona credentials are available."""
+"""Released Superagent SDK scenario: scan."""
 
 import asyncio
-import os
 from pathlib import Path
 
-from _shared import (
-    configure_environment,
-    create_respan,
-    create_superagent_client,
-    example_marker,
-    finish_respan,
-)
+from _shared import client_context, create_respan, example_marker, finish_respan
 from respan import propagate_attributes, workflow
 
 SCRIPT_NAME = Path(__file__).name
 
 
 @workflow(name=SCRIPT_NAME)
-async def run_scan(repo: str) -> str:
-    configure_environment()
-    if not os.getenv("DAYTONA_API_KEY"):
-        return "DAYTONA_API_KEY is not set; skipping live scan example."
+async def run_scan(repo: str):
+    from safety_agent.types import ScanOptions
 
-    client = create_superagent_client()
-
-    result = await client.scan(
-        repo=repo,
-        model=os.getenv("SUPERAGENT_SCAN_MODEL", "anthropic/claude-sonnet-4-5"),
-    )
-
-    return result.result
+    with client_context() as client:
+        result = await client.scan(
+            ScanOptions(repo=repo, branch="fixture-branch", model="openai/gpt-4o-mini")
+        )
+    assert result.usage.cost == 0.0
+    return vars(result)
 
 
-async def main() -> None:
+async def main():
     respan = create_respan(SCRIPT_NAME)
     marker = example_marker()
     try:
         with propagate_attributes(
             trace_group_identifier=SCRIPT_NAME,
-            custom_identifier=marker,
+            thread_identifier=marker + "-thread",
             metadata={
-                "example": "superagent_scan",
-                "script": SCRIPT_NAME,
                 "run_id": marker,
-                "example_run_id": marker,
+                "integration": "superagent",
+                "example": SCRIPT_NAME,
             },
         ):
-            result = await run_scan(
-                "https://github.com/respanai/respan-example-projects"
-            )
+            result = await run_scan("https://example.com/fixture-repository")
+            print(result)
     finally:
         finish_respan(respan)
-
-    if result.startswith("DAYTONA_API_KEY"):
-        print(result)
-    else:
-        print("scan result:", result[:500])
 
 
 if __name__ == "__main__":
