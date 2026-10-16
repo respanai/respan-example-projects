@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SCRIPTS = tuple(sorted(ROOT.glob("0[1-4]_*.py")))
+SCRIPTS = tuple(sorted(ROOT.glob("0[1-9]_*.py")))
 
 
 def _source(path: Path) -> str:

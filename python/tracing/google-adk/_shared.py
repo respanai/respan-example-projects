@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 from uuid import uuid4
 
 from dotenv import load_dotenv
 from google.adk.agents import Agent
 from google.adk.models.base_llm import BaseLlm
-from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.runners import Runner
@@ -25,7 +24,7 @@ APP_USER_ID = "respan-google-adk-user"
 def load_repo_env() -> None:
     """Load environment variables from respan-example-projects/.env."""
     repo_root = Path(__file__).resolve().parents[3]
-    load_dotenv(repo_root / ".env", override=True)
+    load_dotenv(repo_root / ".env", override=False)
 
 
 def require_env(name: str) -> str:
@@ -45,16 +44,27 @@ def gateway_model_name() -> str:
 class DeterministicLlm(BaseLlm):
     """Small local model used by the repeatable full example run."""
 
+    fail: bool = False
+
     async def generate_content_async(
         self,
         llm_request: LlmRequest,
         stream: bool = False,
     ):
+        if self.fail:
+            raise RuntimeError("Synthetic ADK model failure")
         has_function_response = any(
             getattr(part, "function_response", None) is not None
             for content in llm_request.contents
             for part in (content.parts or [])
         )
+        if stream:
+            yield LlmResponse(
+                content=types.Content(
+                    role="model", parts=[types.Part(text="Synthetic partial ")]
+                ),
+                partial=True,
+            )
         if llm_request.tools_dict and not has_function_response:
             content = types.Content(
                 role="model",
@@ -62,8 +72,12 @@ class DeterministicLlm(BaseLlm):
                     types.Part(
                         function_call=types.FunctionCall(
                             id="call-adk-weather-1",
-                            name="get_weather",
-                            args={"city": "San Francisco"},
+                            name="model_consult"
+                            if "model_consult" in llm_request.tools_dict
+                            else "get_weather",
+                            args={"question": "Review this synthetic plan"}
+                            if "model_consult" in llm_request.tools_dict
+                            else {"city": "San Francisco"},
                         )
                     )
                 ],
@@ -71,7 +85,9 @@ class DeterministicLlm(BaseLlm):
         elif has_function_response:
             content = types.Content(
                 role="model",
-                parts=[types.Part(text="San Francisco is sunny, 72F, with light wind.")],
+                parts=[
+                    types.Part(text="San Francisco is sunny, 72F, with light wind.")
+                ],
             )
         else:
             content = types.Content(
@@ -101,6 +117,8 @@ def create_gateway_model() -> BaseLlm:
         "RESPAN_GATEWAY_BASE_URL",
         os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
     )
+    from google.adk.models.lite_llm import LiteLlm
+
     return LiteLlm(
         model=gateway_model_name(),
         api_key=gateway_api_key,
@@ -179,3 +197,27 @@ async def run_agent_once(*, agent: Agent, app_name: str, prompt: str) -> str:
     ):
         events.append(event)
     return final_response_text(events)
+
+
+async def make_runner(agent=None, *, node=None, app_name="synthetic_adk"):
+    sessions = InMemorySessionService()
+    session = await sessions.create_session(app_name=app_name, user_id=APP_USER_ID)
+    kwargs = {"agent": agent} if node is None else {"node": node}
+    return Runner(app_name=app_name, session_service=sessions, **kwargs), session
+
+
+def run_scenario(name, function):
+    import asyncio
+
+    from respan import workflow
+
+    async def run():
+        respan = create_respan(name)
+        try:
+            with example_attributes(name):
+                result = await workflow(name=name)(function)()
+                print(f"scenario={name} result={result}")
+        finally:
+            respan.shutdown()
+
+    asyncio.run(run())

@@ -3,9 +3,6 @@
 import asyncio
 from pathlib import Path
 
-from google.adk.agents import Agent
-from respan import propagate_attributes, workflow
-
 from _shared import (
     create_gateway_model,
     create_respan,
@@ -13,6 +10,8 @@ from _shared import (
     example_run_id,
     run_agent_once,
 )
+from google.adk.agents import Agent
+from respan import propagate_attributes, workflow
 
 SCRIPT_NAME = Path(__file__).name
 APP_NAME = SCRIPT_NAME.removesuffix(".py")
@@ -37,15 +36,18 @@ async def run_respan_attributes(prompt: str) -> str:
 async def main() -> None:
     respan = create_respan(APP_NAME)
     try:
-        with example_attributes(APP_NAME), propagate_attributes(
-            customer_identifier="google-adk-example-user",
-            thread_identifier=f"{example_run_id()}:{APP_NAME}",
-            metadata={
-                "integration": "google-adk",
-                "example": APP_NAME,
-                "run_id": example_run_id(),
-                "scenario": "attributes",
-            },
+        with (
+            example_attributes(APP_NAME),
+            propagate_attributes(
+                customer_identifier="google-adk-example-user",
+                thread_identifier=f"{example_run_id()}:{APP_NAME}",
+                metadata={
+                    "integration": "google-adk",
+                    "example": APP_NAME,
+                    "run_id": example_run_id(),
+                    "scenario": "attributes",
+                },
+            ),
         ):
             await run_respan_attributes("Explain why trace attributes are useful.")
     finally:

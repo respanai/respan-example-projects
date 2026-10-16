@@ -35,6 +35,12 @@ def live_run_client(message: str) -> dict:
 
 def main() -> None:
     load_repo_env()
+    if os.getenv("RESPAN_WATSON_LIVE") != "1":
+        print(
+            "live Watson example skipped: set RESPAN_WATSON_LIVE=1 to opt in",
+            flush=True,
+        )
+        return
     required = (
         "WATSON_ORCHESTRATE_BASE_URL",
         "WATSON_ORCHESTRATE_API_KEY",

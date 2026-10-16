@@ -29,6 +29,12 @@ def live_watsonx_chat(prompt: str) -> dict:
 
 def main() -> None:
     load_repo_env()
+    if os.getenv("RESPAN_WATSON_LIVE") != "1":
+        print(
+            "live Watson example skipped: set RESPAN_WATSON_LIVE=1 to opt in",
+            flush=True,
+        )
+        return
     if not os.getenv("WATSONX_APIKEY") or not os.getenv("WATSONX_SPACE_ID"):
         print("live Watsonx chat skipped: WATSONX credentials absent", flush=True)
         return
