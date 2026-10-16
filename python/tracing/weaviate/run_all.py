@@ -1,40 +1,30 @@
-from __future__ import annotations
+"""Run every controlled scenario; real service access is a separate opt-in."""
 
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-EXAMPLES = [
-    "01_sync_operations.py",
-    "02_async_operations.py",
-    "03_expected_error.py",
-    "04_live_service.py",
-]
+EXAMPLES = [p.name for p in sorted(Path(__file__).parent.glob("0[1-8]_*.py"))]
 
 
-def run() -> None:
+def run():
     here = Path(__file__).resolve().parent
     env = os.environ.copy()
-    marker = env.get("RESPAN_EXAMPLE_RUN_ID") or "weaviate-local-run"
-    env["RESPAN_EXAMPLE_RUN_ID"] = marker
-    failures: list[str] = []
-    for example in EXAMPLES:
+    env.setdefault("RESPAN_EXAMPLE_RUN_ID", "weaviate-local-run")
+    failures = []
+    for name in EXAMPLES:
         try:
             result = subprocess.run(
-                [sys.executable, str(here / example)],
-                check=False,
-                env=env,
-                timeout=120,
+                [sys.executable, str(here / name)], env=env, check=False, timeout=120
             )
         except subprocess.TimeoutExpired:
-            failures.append(f"{example}: timeout")
+            failures.append(name + ": timeout")
             continue
         if result.returncode:
-            failures.append(f"{example}: exit {result.returncode}")
+            failures.append(name + ": failed")
     if failures:
         raise RuntimeError("; ".join(failures))
-    print(f"marker={marker}")
 
 
 if __name__ == "__main__":

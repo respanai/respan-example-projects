@@ -1,30 +1,22 @@
-from __future__ import annotations
+from contextlib import closing
 
-from _shared import finish_respan, make_respan
+from _shared import create, points, run_scenario
 from qdrant_client import QdrantClient
-from respan import workflow
 
 
-@workflow(name="qdrant_expected_error")
-def read_missing_collection(collection_name: str) -> None:
-    client = QdrantClient(":memory:")
-    try:
-        client.get_collection(collection_name)
-    finally:
-        client.close()
-
-
-def main() -> None:
-    respan = None
-    try:
-        respan = make_respan("expected-error")
+def scenario(provider, exporter):
+    with closing(QdrantClient(":memory:")) as client:
+        create(client)
         try:
-            read_missing_collection("missing_collection")
-        except ValueError as exc:
-            print({"expected_error": type(exc).__name__})
-    finally:
-        finish_respan(respan)
+            client.upsert("missing", points=points())
+        except ValueError as error:
+            kind = type(error).__name__
+        else:
+            raise AssertionError("native missing collection error required")
+        count = client.count("docs", exact=True)
+        assert count.count == 0
+        return {"native_error": kind, "original_collection_count": count.count}
 
 
 if __name__ == "__main__":
-    main()
+    run_scenario("expected-error", scenario)

@@ -1,4 +1,4 @@
 python-dotenv>=1.0.0
-respan-ai>=4,<5
+respan-ai>=4.1,<4.2
 respan-instrumentation-weaviate>=0.1.0,<1
 weaviate-client>=4.23,<5

@@ -1,67 +1,29 @@
-from __future__ import annotations
-
-from typing import Any
-
-from _loopback import install_loopback
-from _shared import (
-    create_respan,
-    finish_respan,
-    print_result,
-    run_id,
-    workflow_attributes,
-)
-from respan import Respan, workflow
-
-WORKFLOW_NAME = "pgvector_sync_similarity_workflow"
-SDK: Any | None = None
+import pgvector.psycopg as native
+import psycopg
+from _shared import Vector, run_scenario, vector_values
 
 
-def _sdk() -> Any:
-    if SDK is None:
-        raise RuntimeError("PGVector loopback is not initialized")
-    return SDK
-
-
-@workflow(name=WORKFLOW_NAME)
-def run_sync_similarity(query_vector: list[float], limit: int) -> dict:
-    sdk = _sdk()
-    connection = sdk.psycopg.Connection()
-    cursor = None
-    try:
-        sdk.pgvector_psycopg.register_vector(connection)
-        cursor = connection.execute(
-            "SELECT label, embedding, embedding <-> %s AS distance "
-            "FROM documents ORDER BY distance LIMIT %s",
-            (query_vector, limit),
-        )
-        rows = cursor.fetchall()
+def scenario(dsn):
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        assert native.register_vector(connection) is None
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id,embedding,payload,flag,zero,empty,embedding <-> %s AS distance FROM items ORDER BY id",
+                (Vector([0.0] * 5001),),
+            )
+            rows = cursor.fetchall()
+            assert len(rows) == 75 and all(
+                len(vector_values(row[1])) == 5001 for row in rows
+            )
+            assert rows[0][3:] == (False, 0, "", 0.0)
+            assert len(rows[0][2]["history"]) == 75
         return {
-            "registered": connection.vector_registered,
-            "rows": rows,
+            "native_rows": 75,
+            "vector_dimensions": 5001,
+            "history_items": 75,
+            "actual_distance": rows[0][-1],
         }
-    finally:
-        try:
-            if cursor is not None:
-                cursor.close()
-        finally:
-            try:
-                connection.rollback()
-            finally:
-                connection.close()
-
-
-def main() -> None:
-    global SDK
-    marker = run_id()
-    SDK = install_loopback()
-    respan = create_respan(WORKFLOW_NAME, marker)
-    try:
-        with Respan.propagate_attributes(**workflow_attributes(WORKFLOW_NAME, marker)):
-            result = run_sync_similarity([1.0, 0.0, 0.0], 2)
-        print_result(WORKFLOW_NAME, result, marker)
-    finally:
-        finish_respan(respan)
 
 
 if __name__ == "__main__":
-    main()
+    run_scenario("01_sync_similarity", scenario)

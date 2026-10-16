@@ -1,69 +1,30 @@
-from __future__ import annotations
-
-import asyncio
-from typing import Any
-
-from _loopback import install_loopback
-from _shared import (
-    create_respan,
-    finish_respan,
-    print_result,
-    run_id,
-    workflow_attributes,
-)
-from respan import Respan, workflow
-
-WORKFLOW_NAME = "pgvector_async_similarity_workflow"
-SDK: Any | None = None
+import pgvector.psycopg as native
+import psycopg
+from _shared import Vector, run_scenario, vector_values
 
 
-def _sdk() -> Any:
-    if SDK is None:
-        raise RuntimeError("PGVector loopback is not initialized")
-    return SDK
-
-
-@workflow(name=WORKFLOW_NAME)
-async def run_async_similarity(query_vector: list[float], limit: int) -> dict:
-    sdk = _sdk()
-    rows = [("async", [0.4, 0.5, 0.6], 0.0)]
-    connection = sdk.psycopg.AsyncConnection(rows)
-    cursor = None
-    try:
-        await sdk.pgvector_psycopg.register_vector_async(connection)
-        cursor = await connection.execute(
-            "SELECT label, embedding, embedding <=> %s AS distance "
-            "FROM documents ORDER BY distance LIMIT %s",
-            (query_vector, limit),
-        )
+async def scenario(dsn):
+    async with await psycopg.AsyncConnection.connect(
+        dsn, autocommit=True
+    ) as connection:
+        await native.register_vector_async(connection)
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT id,embedding,embedding <=> %s AS distance FROM items WHERE id<3 ORDER BY id",
+                (Vector([0.25] * 5001),),
+            )
+            rows = await cursor.fetchall()
+            assert len(rows) == 3 and len(vector_values(rows[0][1])) == 5001
+        cursor = await connection.execute("SELECT false,0,''::text")
         row = await cursor.fetchone()
+        assert row == (False, 0, "")
+        await cursor.close()
         return {
-            "registered": connection.vector_registered,
-            "row": row,
+            "native_rows": 3,
+            "vector_dimensions": 5001,
+            "native_cursor_type": type(cursor).__name__,
         }
-    finally:
-        try:
-            if cursor is not None:
-                await cursor.close()
-        finally:
-            try:
-                await connection.rollback()
-            finally:
-                await connection.close()
-
-
-async def run() -> None:
-    global SDK
-    marker = run_id()
-    SDK = install_loopback()
-    respan = create_respan(WORKFLOW_NAME, marker)
-    try:
-        with Respan.propagate_attributes(**workflow_attributes(WORKFLOW_NAME, marker)):
-            result = await run_async_similarity([0.4, 0.5, 0.6], 1)
-        print_result(WORKFLOW_NAME, result, marker)
-    finally:
-        finish_respan(respan)
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    run_scenario("02_async_similarity", scenario)

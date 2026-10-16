@@ -1,5 +1,5 @@
-pymilvus==3.0.1
-milvus-lite==3.2.0
-python-dotenv>=1.0.0
-respan-ai>=2.17.0
+pymilvus>=3.0.2,<4.0.0
+milvus-lite>=3.2.1,<4.0.0
+respan-tracing>=2.17.0,<3.0.0
 respan-instrumentation-milvus>=0.1.0
+python-dotenv>=1.0.0
