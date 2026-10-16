@@ -9,9 +9,9 @@ from _shared import (
     make_respan,
     print_result,
     tracer,
+    workflow,
     workflow_name,
 )
-from respan import workflow
 
 EXAMPLE_NAME = "tool-call"
 TOOL_DEFINITION = {
@@ -32,7 +32,12 @@ TOOL_DEFINITION = {
 def tool_call_workflow(city: str) -> str:
     call_id = "call-weather-001"
     arguments = json.dumps({"city": city})
-    result = {"city": city, "temperature_c": 22, "condition": "sunny"}
+    result = {
+        "city": city,
+        "temperature_c": 22,
+        "condition": "sunny",
+        "vector": [i / 10000 for i in range(5000)],
+    }
 
     with tracer().start_as_current_span("openai.chat.tool_call") as chat_span:
         chat_span.set_attribute("openinference.span.kind", "LLM")
@@ -65,9 +70,10 @@ def tool_call_workflow(city: str) -> str:
         with tracer().start_as_current_span("lookup_weather") as tool_span:
             tool_span.set_attribute("openinference.span.kind", "TOOL")
             tool_span.set_attribute("tool.name", "lookup_weather")
+            tool_span.set_attribute("tool.id", call_id)
             tool_span.set_attribute("input.value", arguments)
             tool_span.set_attribute("output.value", json.dumps(result))
-    return json.dumps(result, sort_keys=True)
+    return f"weather result includes complete {len(result['vector'])}-dimension vector"
 
 
 def run() -> None:

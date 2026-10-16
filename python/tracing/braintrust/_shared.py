@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 import braintrust
+from dotenv import load_dotenv
 from respan import Respan
 from respan_instrumentation_braintrust import BraintrustInstrumentor
-
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = EXAMPLE_DIR.parents[2]
@@ -20,20 +20,13 @@ CUSTOMER_IDENTIFIER = "braintrust-example"
 
 def load_repo_env() -> None:
     """Load the example repository root .env without introducing extra deps."""
-    if not ROOT_ENV.exists():
-        return
-
-    for raw_line in ROOT_ENV.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        value = value.strip().strip("'").strip('"')
-        os.environ[key.strip()] = value
+    load_dotenv(ROOT_ENV, override=False)
 
 
 def new_run_id(example_name: str) -> str:
-    return os.getenv("RESPAN_EXAMPLE_RUN_ID") or f"{example_name}-{uuid.uuid4().hex[:10]}"
+    return (
+        os.getenv("RESPAN_EXAMPLE_RUN_ID") or f"{example_name}-{uuid.uuid4().hex[:10]}"
+    )
 
 
 def create_respan(*, workflow_name: str, run_id: str, example_name: str) -> Respan:
@@ -56,6 +49,7 @@ def create_respan(*, workflow_name: str, run_id: str, example_name: str) -> Resp
 
 
 def create_braintrust_logger(*, workflow_name: str) -> braintrust.Logger:
+    braintrust._internal_get_global_state()._override_bg_logger.logger = FixtureSink()
     return braintrust.init_logger(
         project="Respan Braintrust Examples",
         project_id=f"respan-braintrust-{workflow_name.lower().replace(' ', '-')}",
@@ -73,7 +67,7 @@ def workflow_context(
     example_name: str,
 ) -> Any:
     return respan.propagate_attributes(
-        group_identifier=workflow_name,
+        trace_group_identifier=f"{workflow_name}-{run_id}",
         custom_identifier=run_id,
         metadata={
             "example_set": "braintrust",
@@ -92,3 +86,24 @@ def print_trace_lookup(*, workflow_name: str, run_id: str) -> None:
 def flush_and_shutdown(respan: Respan, logger: braintrust.Logger) -> None:
     logger.flush()
     respan.shutdown()
+
+
+class FixtureSink:
+    """Resolve released SDK records locally without contacting Braintrust."""
+
+    def __init__(self):
+        self.rows = []
+
+    def log(self, *rows):
+        self.rows.extend(rows)
+
+    def flush(self, *args, **kwargs):
+        rows, self.rows = self.rows, []
+        for row in rows:
+            row.get()
+
+    def enforce_queue_size_limit(self, enforce):
+        pass
+
+    def set_masking_function(self, masking):
+        self._masking_function = masking

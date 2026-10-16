@@ -1,0 +1,4 @@
+arize>=8.35.0,<9
+respan-ai>=4.2.3,<5
+respan-instrumentation-arize>=0.1.0,<1
+python-dotenv>=1,<2

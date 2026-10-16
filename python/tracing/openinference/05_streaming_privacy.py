@@ -9,10 +9,10 @@ from _shared import (
     make_respan,
     print_result,
     tracer,
+    workflow,
     workflow_name,
 )
 from openinference.semconv.trace import SpanAttributes as OISpanAttributes
-from respan import workflow
 
 EXAMPLE_NAME = "streaming-privacy"
 

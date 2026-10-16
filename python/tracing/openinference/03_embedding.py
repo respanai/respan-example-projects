@@ -7,16 +7,16 @@ from _shared import (
     make_respan,
     print_result,
     tracer,
+    workflow,
     workflow_name,
 )
-from respan import workflow
 
 EXAMPLE_NAME = "embedding"
 
 
 @workflow(name=workflow_name(EXAMPLE_NAME))
 def embedding_workflow(text: str) -> str:
-    vector = (0.125, -0.25, 0.5, 0.75)
+    vector = tuple(i / 10000 for i in range(5000))
     with tracer().start_as_current_span("openai.embedding") as span:
         span.set_attribute("openinference.span.kind", "EMBEDDING")
         span.set_attribute("embedding.model_name", "text-embedding-3-small")

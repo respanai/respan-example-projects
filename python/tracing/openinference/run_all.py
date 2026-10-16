@@ -12,6 +12,10 @@ EXAMPLE_SCRIPTS = (
     "03_embedding.py",
     "04_expected_failure.py",
     "05_streaming_privacy.py",
+    "06_content_veto.py",
+    "07_native_openai.py",
+    "08_multimodal_usage.py",
+    "09_native_decorators.py",
 )
 EXAMPLE_TIMEOUT_SECONDS = 120
 

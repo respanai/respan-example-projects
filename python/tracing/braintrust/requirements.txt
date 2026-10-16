@@ -3,3 +3,7 @@ braintrust>=0.5.0
 -e ../../../../respan/python-sdks/respan-sdk
 -e ../../../../respan/python-sdks/respan-tracing
 -e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-braintrust
+
+python-dotenv>=1.0
+openai>=2.0,<3
+httpx>=0.28

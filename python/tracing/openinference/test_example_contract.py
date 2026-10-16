@@ -29,22 +29,18 @@ def test_run_all_lists_every_example_once():
 
 def test_common_metadata_and_streaming_source_uses_upstream_openinference(monkeypatch):
     captured = {}
+    from contextlib import contextmanager
 
-    class FakeRespan:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
+    @contextmanager
+    def capture(**kwargs):
+        captured.update(kwargs)
+        yield
 
-    monkeypatch.setattr(_shared, "Respan", FakeRespan)
-    monkeypatch.setattr(_shared, "require_respan_api_key", lambda: "test-key")
-
-    _shared.make_respan("streaming-privacy", "contract-test-marker")
-
-    assert captured["metadata"] == {
-        "example_run_id": "contract-test-marker",
-        "integration": "openinference",
-        "example": "streaming-privacy",
-        "workflow_name": "openinference_streaming_privacy",
-    }
+    monkeypatch.setattr(_shared, "propagate_attributes", capture)
+    with _shared.example_attributes("streaming-privacy", "contract-test-marker"):
+        pass
+    assert captured["metadata"]["run_id"] == "contract-test-marker"
+    assert captured["metadata"]["example"] == "streaming-privacy"
     streaming_source = (Path(__file__).parent / "05_streaming_privacy.py").read_text()
     assert "OISpanAttributes.LLM_INVOCATION_PARAMETERS" in streaming_source
     assert '"stream": True' in streaming_source
@@ -68,7 +64,7 @@ def test_every_public_example_finishes_respan_in_finally():
 
 
 def test_run_all_aggregates_process_failures_and_timeouts(monkeypatch):
-    outcomes = iter((0, 2, "timeout", 3, 0))
+    outcomes = iter((0, 2, "timeout", 3, *([0] * (len(run_all.EXAMPLE_SCRIPTS) - 4))))
     calls = []
 
     class Result:

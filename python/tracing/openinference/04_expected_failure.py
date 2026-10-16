@@ -9,10 +9,10 @@ from _shared import (
     make_respan,
     print_result,
     tracer,
+    workflow,
     workflow_name,
 )
 from opentelemetry.trace import Status, StatusCode
-from respan import workflow
 
 EXAMPLE_NAME = "expected-failure"
 ERROR_MESSAGE = "openinference deterministic provider failure"
