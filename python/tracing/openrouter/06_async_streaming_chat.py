@@ -1,43 +1,27 @@
-"""OpenRouter async streaming completion with full stream finalization."""
-
-from __future__ import annotations
-
 import asyncio
 
-from _shared import close_async, make_async_client, make_respan
-from respan import workflow
+from _shared import MODEL, native_client, tracing, workflow
 
 
-async def main() -> None:
-    respan = None
-    client = None
-    try:
-        respan = make_respan(scenario="async_stream")
-        client, model = make_async_client()
+async def main():
+    with tracing("async_chat_stream"):
+        async with native_client(asynchronous=True) as client:
 
-        @workflow(name="openrouter_async_streaming_chat")
-        async def run(prompt: str) -> str:
-            stream = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=True,
-                stream_options={"include_usage": True},
-            )
-            parts: list[str] = []
-            async with stream:
-                async for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        parts.append(content)
-            result = "".join(parts)
-            print(result)
-            return result
+            @workflow(name="openrouter_native_async_stream")
+            async def run(prompt):
+                stream = await client.chat.send_async(
+                    model=MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    stream=True,
+                )
+                parts = []
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.choices:
+                            parts.append(chunk.choices[0].delta.content or "")
+                return "".join(parts)
 
-        await run("Explain async stream tracing in one short sentence.")
-    finally:
-        await close_async(respan=respan, client=client)
+            print(await run("Explain trace flow briefly."))
 
 
 if __name__ == "__main__":

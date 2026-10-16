@@ -1,9 +1,14 @@
+import os
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import litellm
 from _shared import (
     GATEWAY_API_KEY,
     GATEWAY_BASE_URL,
     MODEL,
     create_respan,
+    provider_client,
     run_with_example_attributes,
 )
 from respan import propagate_attributes, workflow
@@ -19,6 +24,7 @@ def litellm_respan_attributes() -> str:
         metadata={"scenario": "attribute-propagation"},
     ):
         response = litellm.completion(
+            **provider_client(),
             api_key=GATEWAY_API_KEY,
             api_base=GATEWAY_BASE_URL,
             model=MODEL,

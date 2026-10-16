@@ -28,9 +28,9 @@ def trace_expected_error(prompt: str) -> None:
         client.close()
 
 
-def _status_code(exc: BaseException) -> int:
+def _status_code(exc: BaseException) -> int | None:
     value: Any = getattr(exc, "status_code", None)
-    return value if isinstance(value, int) else 500
+    return value if isinstance(value, int) else None
 
 
 def main() -> None:

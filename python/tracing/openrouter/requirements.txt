@@ -1,4 +1,8 @@
+openrouter>=1.3.22,<2.0.0
 openai>=3.0.0,<4.0.0
-respan-ai>=4.1.0
+httpx>=0.28.1,<1
+respan-tracing>=2.17.0,<3
+respan-sdk>=2.6.26
 respan-instrumentation-openai>=1.2.1,<2.0.0
-respan-instrumentation-openrouter>=0.1.0
+respan-instrumentation-openrouter[native]>=0.1.0
+python-dotenv>=1.0.0

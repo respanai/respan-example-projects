@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import asyncio
 
 import litellm
@@ -6,6 +10,7 @@ from _shared import (
     GATEWAY_BASE_URL,
     MODEL,
     create_respan,
+    provider_client,
     run_async_with_example_attributes,
 )
 from respan import workflow
@@ -16,6 +21,7 @@ WORKFLOW_NAME = "litellm_async_streaming.workflow"
 @workflow(name=WORKFLOW_NAME)
 async def litellm_async_streaming() -> str:
     stream = await litellm.acompletion(
+        **provider_client(asynchronous=True, stream=True),
         api_key=GATEWAY_API_KEY,
         api_base=GATEWAY_BASE_URL,
         model=MODEL,

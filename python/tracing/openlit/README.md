@@ -1,40 +1,27 @@
-# OpenLIT Respan instrumentation examples
+# OpenLIT tracing examples
 
-These examples exercise the local `respan-instrumentation-openlit` package with
-current OpenLIT and OpenAI SDKs. They cover sync and async calls, Chat
-Completions and Responses streaming, early stream close, real tool definitions
-and execution, embeddings, a precise 429 error, and content-capture opt-out.
+The nine scripts use released OpenLIT and OpenAI APIs with controlled HTTP fixtures. By default they collect spans locally and require no model or Respan credential. They exercise sync/async Chat Completions and Responses, native streaming and early close, actual tool execution, 5000-element embeddings and tool vectors, a controlled 429 error, typed Responses.parse, content opt-outs and delayed-parent privacy, and invalid raw usage counts.
 
-The default provider is a deterministic loopback server; it uses no model
-credential and returns bounded fixtures. Set `RESPAN_OPENLIT_LIVE=1` to use the
-`OPENAI_API_KEY` and optional `OPENAI_BASE_URL` from the repository `.env`
-instead. Error and privacy examples always remain deterministic.
-
-## Setup
-
-From the workspace directory that contains both the `respan` and
-`respan-example-projects` repositories:
+Install from this examples repository:
 
 ```bash
-python -m venv /private/tmp/respan-openlit-examples
-/private/tmp/respan-openlit-examples/bin/pip install -r respan-example-projects/python/tracing/openlit/requirements.txt
-/private/tmp/respan-openlit-examples/bin/pip install -e respan/python-sdks/respan-sdk -e respan/python-sdks/respan-tracing -e respan/python-sdks/respan -e respan/python-sdks/instrumentations/respan-instrumentation-openlit
+python -m venv /private/tmp/openlit-examples
+/private/tmp/openlit-examples/bin/pip install -r python/tracing/openlit/requirements.txt
+/private/tmp/openlit-examples/bin/python python/tracing/openlit/run_all_examples.py
 ```
 
-`respan-example-projects/.env` must contain `RESPAN_API_KEY` (or
-`RESPAN_GATEWAY_API_KEY`) for trace export. The examples verify that the
-instrumentation distribution is actually linked to the local checkout.
+For a local adapter checkout, install only that package with `pip install -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-openlit`; keep the Respan core packages released.
 
-## Run with an exact audit marker
+The runner starts a fresh process per script, applies a 60-second timeout, continues after failures, and shares one exact `RESPAN_EXAMPLE_RUN_ID` (generated locally if omitted). Set `OPENLIT_CAPTURE_DIR` to save local span JSON. OpenLIT 1.45.0 with OpenAI 2.54.0 and OpenLIT 1.44.0 with OpenAI 1.92.0 are tested; OpenLIT declares OpenAI <3. Native Responses.parse instrumentation is gated to OpenLIT 1.45, so script 06 explicitly skips at 1.44.
 
-Set the marker in the shell; the runner never invents or rewrites one:
+Trace export is a separate opt-in:
 
 ```bash
-RESPAN_EXAMPLE_RUN_ID=otel2-fix-py-group-21-openlit-dev-YYYYMMDDTHHMMSSZ \
-  /private/tmp/respan-openlit-examples/bin/python \
-  respan-example-projects/python/tracing/openlit/run_all_examples.py
+RESPAN_EXPORT=1 RESPAN_ENV_FILE=/path/to/.env \
+  RESPAN_EXAMPLE_RUN_ID=openlit-controlled-unique-marker \
+  /private/tmp/openlit-examples/bin/python python/tracing/openlit/run_all_examples.py
 ```
 
-Every process closes its OpenAI client, flushes and shuts down Respan, and the
-runner enforces a 60-second timeout per example. Search the platform by the
-exact `run_id` / `example_run_id`; scenario names identify each tree.
+The env file needs `RESPAN_API_KEY`; shell variables take precedence because dotenv uses `override=False`. Export goes to the configured `RESPAN_BASE_URL` (default `https://api.respan.ai/api`). The exact marker is attached to every span for scoped stored-trace inspection. An accepted HTTP request alone does not prove stored payload or status fidelity.
+
+`RESPAN_OPENLIT_LIVE=1` lets the first three scenarios use `OPENAI_API_KEY` and optional `OPENAI_BASE_URL`. The remaining scenarios retain controlled fixtures. Live models, credentials, billing and provider-specific tool/stream behavior are not validated by the fixture run. The helper workflow/tool contexts use native `openlit.start_trace`; they describe the actual application call and preserve the returned value.

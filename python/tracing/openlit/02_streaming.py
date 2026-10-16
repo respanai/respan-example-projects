@@ -9,8 +9,8 @@ from _shared import (
     finish_respan,
     provider_config,
     sync_client,
+    workflow,
 )
-from respan import workflow
 
 SCENARIO = "chat-responses-streaming"
 

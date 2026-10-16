@@ -3,51 +3,31 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 
-EXAMPLES = [
-    "01_chat_completion.py",
-    "02_streaming_chat.py",
-    "03_tool_calling.py",
-    "04_async_chat.py",
-    "05_structured_output.py",
-    "06_async_streaming_chat.py",
-    "07_expected_error.py",
-    "08_live_provider.py",
-]
-
-EXAMPLE_TIMEOUT_SECONDS = 90
+EXAMPLES = [p.name for p in sorted(Path(__file__).parent.glob("[0-9][0-9]_*.py"))]
 
 
-def run() -> None:
-    here = Path(__file__).resolve().parent
-    marker = os.getenv("RESPAN_EXAMPLE_RUN_ID") or (
-        "otel2-openrouter-local-"
-        + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    )
-    child_env = dict(os.environ)
-    child_env["RESPAN_EXAMPLE_RUN_ID"] = marker
-    print(f"OpenRouter example marker: {marker}", flush=True)
-    failures: list[str] = []
-    for example in EXAMPLES:
-        print("\n### running " + example, flush=True)
+def run():
+    env = os.environ.copy()
+    env.setdefault("RESPAN_EXAMPLE_RUN_ID", f"otel2-openrouter-local-{time.time_ns()}")
+    failures = []
+    for filename in EXAMPLES:
         try:
             result = subprocess.run(
-                [sys.executable, str(here / example)],
+                [sys.executable, str(Path(__file__).parent / filename)],
                 check=False,
-                env=child_env,
-                timeout=EXAMPLE_TIMEOUT_SECONDS,
+                env=env,
+                timeout=90,
             )
         except subprocess.TimeoutExpired:
-            failures.append(f"{example}: timeout after {EXAMPLE_TIMEOUT_SECONDS}s")
-            continue
-        if result.returncode != 0:
-            failures.append(f"{example}: exit {result.returncode}")
-
+            failures.append(f"{filename}: timeout")
+        else:
+            if result.returncode:
+                failures.append(f"{filename}: exit {result.returncode}")
     if failures:
-        details = "\n".join(f"- {failure}" for failure in failures)
-        raise RuntimeError(f"OpenRouter example failures:\n{details}")
+        raise RuntimeError("; ".join(failures))
 
 
 if __name__ == "__main__":

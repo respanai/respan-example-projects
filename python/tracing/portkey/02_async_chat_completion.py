@@ -25,7 +25,28 @@ async def trace_async_chat(prompt: str) -> dict[str, str]:
         response = await client.chat.completions.create(
             model=model_name(), messages=[{"role": "user", "content": prompt}]
         )
-        return {"response": response.choices[0].message.content or ""}
+        stream = await client.chat.completions.create(
+            model=model_name(),
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        content = "".join(
+            [
+                chunk.choices[0].delta.content or ""
+                async for chunk in stream
+                if chunk.choices
+            ]
+        )
+        embedding = await client.embeddings.create(
+            model="fixture-embedding", input=prompt
+        )
+        result = await client.responses.create(model="fixture-responses", input=prompt)
+        return {
+            "response": response.choices[0].message.content or "",
+            "stream": content,
+            "embedding_dimensions": len(embedding.data[0].embedding),
+            "response_call_id": result.output[1].call_id,
+        }
     finally:
         await client.close()
 

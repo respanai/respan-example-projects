@@ -8,8 +8,9 @@ from _shared import (
     finish_respan,
     provider_config,
     sync_client,
+    tool,
+    workflow,
 )
-from respan import tool, workflow
 
 SCENARIO = "tool-calling"
 TOOL_SCHEMA = {

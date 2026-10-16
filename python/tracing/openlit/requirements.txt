@@ -1,4 +1,5 @@
-openai>=2.54.0,<3.0.0
+openai>=1.92.0,<3.0.0
+httpx>=0.27.0
 python-dotenv>=1.0.0
-respan-ai>=2.7.4
+respan-tracing>=2.17.0,<3.0.0
 respan-instrumentation-openlit>=0.1.0

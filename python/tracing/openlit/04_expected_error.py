@@ -6,9 +6,9 @@ from _shared import (
     finish_respan,
     provider_config,
     sync_client,
+    workflow,
 )
 from openai import RateLimitError
-from respan import workflow
 
 SCENARIO = "expected-error"
 

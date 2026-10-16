@@ -1,39 +1,23 @@
-"""Deterministic OpenRouter-compatible 429 failure coverage."""
-
-from __future__ import annotations
-
-from _shared import close_sync, make_mock_client, make_respan
-from openai import RateLimitError
-from respan import workflow
+from _shared import native_client, tracing, workflow
+from openrouter.errors import OpenRouterError
 
 
-def main() -> None:
-    respan = None
-    client = None
-    try:
-        respan = make_respan(scenario="expected_429")
-        client, model = make_mock_client()
+def main():
+    with tracing("provider_error"), native_client() as client:
 
-        @workflow(name="openrouter_expected_429")
-        def run(trigger_prompt: str) -> str:
+        @workflow(name="openrouter_native_error")
+        def run(trigger_prompt):
             try:
-                client.chat.completions.create(
-                    model=model,
+                client.chat.send(
+                    model="fixture/error",
                     messages=[{"role": "user", "content": trigger_prompt}],
                 )
-            except RateLimitError as exc:
-                if exc.status_code != 429:
-                    raise AssertionError(
-                        f"expected HTTP 429, received {exc.status_code}"
-                    ) from exc
-                return "Observed expected deterministic OpenRouter 429"
-            raise AssertionError(
-                "expected the deterministic OpenRouter request to fail"
-            )
+            except OpenRouterError as error:
+                assert error.status_code == 429
+                return {"expected_error": type(error).__name__}
+            raise AssertionError("The fixture must raise a provider error")
 
-        print(run("trigger deterministic 429"))
-    finally:
-        close_sync(respan=respan, client=client)
+        print(run("Trigger the controlled rate limit."))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,8 @@
 respan-ai
 respan-instrumentation-litellm
-litellm
+litellm>=1.80.10
+openai>=2.8,<3
+httpx>=0.28
 python-dotenv
+fastapi
+orjson

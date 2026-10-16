@@ -14,6 +14,13 @@ SCRIPTS = (
     "04_tool_calling.py",
     "05_expected_error.py",
     "06_live_portkey.py",
+    "07_embeddings.py",
+    "08_responses.py",
+    "09_structured_chat.py",
+    "10_prompt_and_text.py",
+    "11_private_content.py",
+    "12_stream_error.py",
+    "13_tools_and_stream.py",
 )
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
