@@ -1,33 +1,41 @@
-import { createRuntime, runCase } from "./_shared.js";
-
-const caseId = "failure";
-const { client, respan } = createRuntime();
-
+import { context } from "@opentelemetry/api";
+import { CONTEXT_KEY_ALLOW_TRACE_CONTENT } from "@traceloop/ai-semantic-conventions";
+import { MODEL, LIVE, createRuntime, runCase, log } from "./_shared.js";
+const caseId = "privacy_and_error";
+const runtime = await createRuntime();
 try {
-  const output = await runCase(respan, caseId, async () => {
+  const result = await runCase(runtime.respan, caseId, async () => {
+    await context.with(
+      context.active().setValue(CONTEXT_KEY_ALLOW_TRACE_CONTENT, false),
+      () =>
+        runtime.client.messages.create({
+          model: MODEL,
+          max_tokens: 512,
+          messages: [{ role: "user", content: "Private model payload." }],
+        }),
+    );
+    if (LIVE) return { privateCall: true, fixtureErrorSkipped: true };
     try {
-      await client.messages.create({
-        model: "respan-intentional-anthropic-error-model",
+      await runtime.client.messages.create({
+        model: "fixture-error",
         max_tokens: 20,
-        messages: [
-          { role: "user", content: "Exercise the expected Anthropic failure path." },
-        ],
+        messages: [{ role: "user", content: "Controlled HTTP failure." }],
       });
-      throw new Error("Expected the unsupported Anthropic model request to fail.");
+      throw Error("Expected controlled error");
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("Expected the unsupported")) {
+      if (
+        !(error instanceof Error) ||
+        error.message === "Expected controlled error"
+      )
         throw error;
-      }
       return {
-        status:
-          typeof error === "object" && error !== null && "status" in error
-            ? error.status
-            : undefined,
-        message: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+        privateCall: true,
+        errorType: error.name,
+        status: (error as { status?: number }).status,
       };
     }
   });
-  console.log(JSON.stringify({ caseId, expectedFailure: output }));
+  log(caseId, result);
 } finally {
-  await respan.shutdown();
+  await runtime.close(caseId);
 }

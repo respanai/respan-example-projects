@@ -1,7 +1,6 @@
 import {
   createAzureClient,
   createRespan,
-  installMockAzureOpenAIResponses,
   logExampleResult,
   runWithExampleTrace,
 } from "./_shared.js";
@@ -9,8 +8,9 @@ import {
 const workflowName = "TypeScript Azure OpenAI Text Completion Example";
 
 export async function textCompletionExample(): Promise<void> {
-  const restoreMocks = installMockAzureOpenAIResponses();
-  const respan = createRespan("typescript-azure-openai-text-completion-example");
+  const respan = await createRespan(
+    "typescript-azure-openai-text-completion-example",
+  );
   await respan.initialize();
 
   try {
@@ -20,10 +20,7 @@ export async function textCompletionExample(): Promise<void> {
         model: "gpt-35-turbo-instruct",
         prompt: "Write one sentence about Respan tracing.",
         max_tokens: 32,
-        extraAttributes: {
-          "respan.metadata.azure_feature": "text_completion",
-        },
-      } as any);
+      });
     });
 
     logExampleResult(workflowName, {
@@ -32,7 +29,6 @@ export async function textCompletionExample(): Promise<void> {
     });
   } finally {
     await respan.shutdown();
-    restoreMocks();
   }
 }
 

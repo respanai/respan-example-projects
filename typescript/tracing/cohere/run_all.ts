@@ -17,6 +17,9 @@ const examples = [
   "04_rerank.ts",
   "05_legacy_generate.ts",
   "06_expected_error.ts",
+  "07_privacy.ts",
+  "08_v1_chat.ts",
+  "09_document_parse.ts",
 ];
 
 const runId = process.env.RESPAN_EXAMPLE_RUN_ID || `cohere-ts-${Date.now()}`;

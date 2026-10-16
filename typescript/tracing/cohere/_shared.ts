@@ -5,13 +5,22 @@ import * as Cohere from "cohere-ai";
 import { CohereClient, CohereClientV2 } from "cohere-ai";
 import { CohereInstrumentor } from "@respan/instrumentation-cohere";
 import { Respan } from "@respan/respan";
-import { startMockCohereServer, type MockCohereServer } from "./_mock_server.js";
+import {
+  startMockCohereServer,
+  type MockCohereServer,
+} from "./_mock_server.js";
+import { startLocalCollector } from "./_collector.js";
 
 const exampleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(exampleDir, "../../..");
-dotenv.config({ path: path.join(repoRoot, ".env") });
+if (
+  process.env.RESPAN_EXPORT === "true" ||
+  process.env.COHERE_USE_REAL_API === "true"
+)
+  dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true } as any);
 
-export const RUN_ID = process.env.RESPAN_EXAMPLE_RUN_ID || `cohere-ts-${Date.now()}`;
+export const RUN_ID =
+  process.env.RESPAN_EXAMPLE_RUN_ID || `cohere-ts-${Date.now()}`;
 
 function envValue(name: string): string | undefined {
   const direct = process.env[name];
@@ -33,7 +42,9 @@ async function createCohereRuntime(): Promise<CohereRuntime> {
   let mockServer: MockCohereServer | undefined;
   const token = useReal ? envValue("COHERE_API_KEY") : "mock-cohere-token";
   if (!token) {
-    throw new Error("Set COHERE_API_KEY or leave COHERE_USE_REAL_API unset to use the local mock server.");
+    throw new Error(
+      "Set COHERE_API_KEY or leave COHERE_USE_REAL_API unset to use the local mock server.",
+    );
   }
 
   const environment = useReal
@@ -60,21 +71,27 @@ async function createCohereRuntime(): Promise<CohereRuntime> {
 export async function runCohereWorkflow<T>(
   workflowName: string,
   fn: (runtime: CohereRuntime) => Promise<T>,
+  capture: { traceContent?: boolean } = {},
 ): Promise<T> {
-  const apiKey = envValue("RESPAN_API_KEY");
-  if (!apiKey) {
-    throw new Error("Set RESPAN_API_KEY in the respan-example-projects repo root .env file.");
-  }
+  const exportToRespan = process.env.RESPAN_EXPORT === "true";
+  const collectorOverride = process.env.RESPAN_COLLECTOR_URL;
+  const collector =
+    !exportToRespan && !collectorOverride
+      ? await startLocalCollector()
+      : undefined;
+  const apiKey = exportToRespan ? envValue("RESPAN_API_KEY") : "local-fixture";
+  if (!apiKey) throw new Error("RESPAN_EXPORT=true requires RESPAN_API_KEY.");
 
   const respan = new Respan({
     apiKey,
-    baseURL: envValue("RESPAN_BASE_URL"),
+    baseURL: collectorOverride ?? collector?.url ?? envValue("RESPAN_BASE_URL"),
     appName: "cohere-typescript-examples",
-    traceContent: true,
+    traceContent: capture.traceContent !== false,
     silenceInitializationMessage: true,
     instrumentations: [
       new CohereInstrumentor({
         sdkModule: Cohere,
+        traceContent: capture.traceContent !== false,
       }),
     ],
   });
@@ -111,9 +128,15 @@ export async function runCohereWorkflow<T>(
   } finally {
     await respan.shutdown();
     await runtime?.close();
+    await collector?.close(workflowName, RUN_ID);
   }
 }
 
-export function logExampleResult(workflowName: string, details: Record<string, unknown>): void {
-  console.log(JSON.stringify({ workflowName, runId: RUN_ID, ...details }, null, 2));
+export function logExampleResult(
+  workflowName: string,
+  details: Record<string, unknown>,
+): void {
+  console.log(
+    JSON.stringify({ workflowName, runId: RUN_ID, ...details }, null, 2),
+  );
 }

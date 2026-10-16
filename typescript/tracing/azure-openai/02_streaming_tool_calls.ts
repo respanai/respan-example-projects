@@ -1,9 +1,9 @@
 import {
   createAzureClient,
   createRespan,
-  installMockAzureOpenAIResponses,
   logExampleResult,
   runWithExampleTrace,
+  stampTool,
 } from "./_shared.js";
 
 const workflowName = "TypeScript Azure OpenAI Streaming Tool Example";
@@ -17,7 +17,8 @@ type StreamedToolCall = {
 function lookupCity(city: string): { city: string; note: string } {
   return {
     city,
-    note: city + " has active waterfront neighborhoods and frequent ferry traffic.",
+    note:
+      city + " has active waterfront neighborhoods and frequent ferry traffic.",
   };
 }
 
@@ -42,24 +43,27 @@ function mergeToolCallDelta(
 }
 
 function parseFirstToolArguments(toolCalls: Map<number, StreamedToolCall>): {
+  callId: string;
   toolName: string;
   args: { city: string };
 } {
   const firstToolCall = [...toolCalls.values()][0];
   if (!firstToolCall) {
-    throw new Error("Expected the mocked Azure OpenAI stream to emit a tool call.");
+    throw new Error("Expected the Azure OpenAI stream to emit a tool call.");
   }
 
   const parsed = JSON.parse(firstToolCall.argumentsText) as { city?: string };
   return {
+    callId: firstToolCall.id || "",
     toolName: firstToolCall.name || "lookup_city",
     args: { city: parsed.city || "Seattle" },
   };
 }
 
 export async function streamingToolCallsExample(): Promise<void> {
-  const restoreMocks = installMockAzureOpenAIResponses();
-  const respan = createRespan("typescript-azure-openai-streaming-tool-example");
+  const respan = await createRespan(
+    "typescript-azure-openai-streaming-tool-example",
+  );
   await respan.initialize();
 
   try {
@@ -87,14 +91,11 @@ export async function streamingToolCallsExample(): Promise<void> {
             },
           },
         ],
-        extraAttributes: {
-          "respan.metadata.azure_feature": "streaming_tool_calls",
-        },
-      } as any);
+      });
 
       const chunks: string[] = [];
       const toolCalls = new Map<number, StreamedToolCall>();
-      for await (const chunk of stream as any) {
+      for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
         if (delta?.content) {
           chunks.push(delta.content);
@@ -103,10 +104,13 @@ export async function streamingToolCallsExample(): Promise<void> {
       }
 
       const streamedText = chunks.join("");
-      const { toolName, args } = parseFirstToolArguments(toolCalls);
+      const { callId, toolName, args } = parseFirstToolArguments(toolCalls);
       const toolResult = await respan.withTool(
         { name: toolName },
-        async ({ city }: { city: string }) => lookupCity(city),
+        async ({ city }: { city: string }) => {
+          stampTool(callId, toolName, args);
+          return lookupCity(city);
+        },
         args,
       );
 
@@ -119,7 +123,7 @@ export async function streamingToolCallsExample(): Promise<void> {
             content: streamedText,
             tool_calls: [
               {
-                id: "call_city",
+                id: callId,
                 type: "function",
                 function: {
                   name: toolName,
@@ -130,14 +134,11 @@ export async function streamingToolCallsExample(): Promise<void> {
           },
           {
             role: "tool",
-            tool_call_id: "call_city",
+            tool_call_id: callId,
             content: JSON.stringify(toolResult),
           },
         ],
-        extraAttributes: {
-          "respan.metadata.azure_feature": "tool_final_answer",
-        },
-      } as any);
+      });
 
       return {
         streamedText,
@@ -149,7 +150,6 @@ export async function streamingToolCallsExample(): Promise<void> {
     logExampleResult(workflowName, result);
   } finally {
     await respan.shutdown();
-    restoreMocks();
   }
 }
 
