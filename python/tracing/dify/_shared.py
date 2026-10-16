@@ -10,7 +10,8 @@ import uuid
 from contextlib import AbstractContextManager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from types import TracebackType
+from typing import Any, Self
 
 from dotenv import load_dotenv
 from opentelemetry.semconv_ai import SpanAttributes
@@ -41,7 +42,7 @@ class _LocalDifyHandler(BaseHTTPRequestHandler):
             return {}
         try:
             return json.loads(body.decode("utf-8"))
-        except Exception:
+        except json.JSONDecodeError:
             return {}
 
     def _send_json(self, payload: dict[str, Any], *, status: int = 200) -> None:
@@ -54,9 +55,7 @@ class _LocalDifyHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _send_sse(self, events: list[dict[str, Any]]) -> None:
-        data = b"".join(
-            f"data: {json.dumps(event)}\n\n".encode("utf-8") for event in events
-        )
+        data = b"".join(f"data: {json.dumps(event)}\n\n".encode() for event in events)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -78,6 +77,34 @@ class _LocalDifyHandler(BaseHTTPRequestHandler):
         }
 
     def do_GET(self) -> None:
+        if self.path.startswith("/datasets"):
+            self._send_json(
+                {
+                    "data": [
+                        {
+                            "id": "dataset-local",
+                            "name": "Local tracing knowledge base",
+                        }
+                    ],
+                    "page": 1,
+                    "limit": 20,
+                    "total": 1,
+                }
+            )
+            return
+        if self.path.startswith("/workspaces/current/models/model-types/"):
+            self._send_json(
+                {
+                    "data": [
+                        {
+                            "provider": "local",
+                            "model": "dify/local-test-model",
+                            "model_type": "llm",
+                        }
+                    ]
+                }
+            )
+            return
         if self.path.startswith("/parameters"):
             self._send_json(
                 {
@@ -141,6 +168,11 @@ class _LocalDifyHandler(BaseHTTPRequestHandler):
         user = payload.get("user", "local-user")
 
         if self.path == "/chat-messages":
+            if payload.get("query") == "controlled SSE failure":
+                self._send_sse(
+                    [{"event": "error", "message": "controlled SSE failure"}]
+                )
+                return
             if response_mode == "streaming":
                 self._send_sse(
                     [
@@ -197,6 +229,16 @@ class _LocalDifyHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/workflows/run":
+            if payload.get("inputs", {}).get("query") == "controlled workflow failure":
+                self._send_json(
+                    {
+                        "data": {
+                            "status": "failed",
+                            "error": "controlled workflow failure",
+                        }
+                    }
+                )
+                return
             if response_mode == "streaming":
                 self._send_sse(
                     [
@@ -239,6 +281,41 @@ class _LocalDifyHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if self.path.endswith("/pipeline/run"):
+            if response_mode == "streaming":
+                self._send_sse(
+                    [
+                        {
+                            "event": "workflow_started",
+                            "task_id": "task-rag-pipeline",
+                            "workflow_run_id": "rag-run-local-001",
+                        },
+                        {
+                            "event": "workflow_finished",
+                            "task_id": "task-rag-pipeline",
+                            "workflow_run_id": "rag-run-local-001",
+                            "data": {
+                                "status": "succeeded",
+                                "outputs": {"documents": 1},
+                                "total_steps": 2,
+                            },
+                        },
+                    ]
+                )
+                return
+            self._send_json(
+                {
+                    "task_id": "task-rag-pipeline",
+                    "workflow_run_id": "rag-run-local-001",
+                    "data": {
+                        "status": "succeeded",
+                        "outputs": {"documents": 1},
+                        "total_steps": 2,
+                    },
+                }
+            )
+            return
+
         if self.path.startswith("/messages/") and self.path.endswith("/feedbacks"):
             self._send_json({"result": "success"})
             return
@@ -256,31 +333,38 @@ class LocalDifyServer(AbstractContextManager):
         self.base_url = f"http://127.0.0.1:{self._server.server_port}"
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
-    def __enter__(self) -> "LocalDifyServer":
+    def __enter__(self) -> Self:
         self._thread.start()
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)
 
 
 class DifyExampleRuntime(AbstractContextManager):
-    def __init__(self, workflow_name: str) -> None:
+    def __init__(self, workflow_name: str, *, include_content: bool = True) -> None:
+        self.include_content = include_content
         self.workflow_name = workflow_name
         self.run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID") or (
             f"dify-{workflow_name}-{uuid.uuid4().hex[:8]}"
         )
         self.respan = None
         self.base_url = ""
+        self.is_local = False
         self._server_context: LocalDifyServer | None = None
         self._attributes_context = None
         self._workflow_context = None
         self._workflow_span = None
         self._result: Any = None
 
-    def __enter__(self) -> "DifyExampleRuntime":
+    def __enter__(self) -> Self:
         load_repo_env()
         self._configure_dify_endpoint()
 
@@ -291,7 +375,7 @@ class DifyExampleRuntime(AbstractContextManager):
             api_key=os.getenv("RESPAN_API_KEY"),
             base_url=os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
             app_name=self.workflow_name,
-            instrumentations=[DifyInstrumentor()],
+            instrumentations=[DifyInstrumentor(include_content=self.include_content)],
             metadata={
                 "integration": "dify",
                 "run_id": self.run_id,
@@ -323,7 +407,12 @@ class DifyExampleRuntime(AbstractContextManager):
         print(f"example_run_id={self.run_id}")
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         try:
             if self._workflow_span is not None:
                 output = (
@@ -347,13 +436,14 @@ class DifyExampleRuntime(AbstractContextManager):
 
     def _configure_dify_endpoint(self) -> None:
         base_url = os.getenv("DIFY_BASE_URL")
-        if base_url:
+        if base_url and os.getenv("DIFY_USE_FIXTURES") != "1":
             self.base_url = base_url.rstrip("/")
             print(f"Using Dify endpoint: {self.base_url}")
             return
 
         self._server_context = LocalDifyServer().__enter__()
         self.base_url = self._server_context.base_url
+        self.is_local = True
         print(f"Using local Dify-compatible test server: {self.base_url}")
 
     def api_key(self, kind: str = "DIFY_API_KEY") -> str:
@@ -362,23 +452,55 @@ class DifyExampleRuntime(AbstractContextManager):
     def chat_client(self):
         from dify_client import ChatClient
 
-        client = ChatClient(self.api_key("DIFY_CHAT_API_KEY"))
-        client.base_url = self.base_url
-        return client
+        return self._sync_client(ChatClient, "DIFY_CHAT_API_KEY")
 
     def completion_client(self):
         from dify_client import CompletionClient
 
-        client = CompletionClient(self.api_key("DIFY_COMPLETION_API_KEY"))
-        client.base_url = self.base_url
-        return client
+        return self._sync_client(CompletionClient, "DIFY_COMPLETION_API_KEY")
 
     def raw_client(self):
         from dify_client import DifyClient
 
-        client = DifyClient(self.api_key("DIFY_WORKFLOW_API_KEY"))
-        client.base_url = self.base_url
-        return client
+        return self._sync_client(DifyClient, "DIFY_WORKFLOW_API_KEY")
+
+    def workflow_client(self):
+        try:
+            from dify_client import WorkflowClient
+        except ImportError:
+            return None
+        return self._sync_client(WorkflowClient, "DIFY_WORKFLOW_API_KEY")
+
+    def knowledge_base_client(self, dataset_id: str):
+        try:
+            from dify_client import KnowledgeBaseClient
+        except ImportError:
+            return None
+        api_key = self.api_key("DIFY_DATASET_API_KEY")
+        return KnowledgeBaseClient(
+            api_key=api_key,
+            base_url=self.base_url,
+            dataset_id=dataset_id,
+        )
+
+    def workspace_client(self):
+        try:
+            from dify_client import WorkspaceClient
+        except ImportError:
+            return None
+        return self._sync_client(WorkspaceClient, "DIFY_DATASET_API_KEY")
+
+    def _sync_client(self, client_class: Any, api_key_name: str):
+        api_key = self.api_key(api_key_name)
+        try:
+            return client_class(api_key=api_key, base_url=self.base_url)
+        except TypeError:
+            # Released dify-client 0.1.10 accepts only api_key and reads the
+            # mutable base_url property. The refreshed 0.1.12 source captures
+            # base_url in an httpx client at construction time.
+            client = client_class(api_key)
+            client.base_url = self.base_url
+            return client
 
     def user(self, suffix: str) -> str:
         return f"respan-dify-{suffix}-{uuid.uuid4().hex[:8]}"
@@ -397,7 +519,12 @@ class sample_file(AbstractContextManager):
         self.file = self.path.open("rb")
         return self.file
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.file.close()
         self.path.unlink(missing_ok=True)
 

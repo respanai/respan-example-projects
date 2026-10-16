@@ -1,8 +1,5 @@
 python-dotenv>=1.0.0
--e ../../../../respan/python-sdks/respan-sdk
--e ../../../../respan/python-sdks/respan-tracing
--e ../../../../respan/python-sdks/respan
--e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-openinference
--e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-groq
-groq>=0.9.0
+respan-ai>=4.2.3
+respan-instrumentation-groq>=0.1.0
+groq>=1.7.0
 httpx>=0.28.0

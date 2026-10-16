@@ -1,43 +1,29 @@
-# Guardrails AI Tracing Examples
+# Guardrails tracing examples
 
-These examples show how to trace Guardrails AI validation with Respan.
-
-## Setup
-
-From the repository root:
+Nine deterministic examples for Guardrails AI 0.11.0 and the paired `respan-instrumentation-guardrails` update. The adapter also supports Guardrails 0.9.3. These examples use released Respan runtime packages; the target instrumentation may be installed from its paired PR for development.
 
 ```bash
-python -m venv .venv-guardrails
-source .venv-guardrails/bin/activate
-pip install -r python/tracing/guardrails/requirements.txt
+pip install -r requirements.txt
+pip install --no-deps -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-guardrails
+RESPAN_EXAMPLE_RUN_ID=guardrails-audit-001 python run_all.py
 ```
 
-The requirements file installs `guardrails-ai` from the Guardrails GitHub
-`v0.9.3` tag because the PyPI project is currently quarantined and hidden from
-installer clients. It also pins `guardrails-api==0.3.3`, matching the upstream
-issue workaround.
+Set `RESPAN_API_KEY` in the repository root `.env` or environment. `RESPAN_BASE_URL` defaults to `https://api.respan.ai/api`. Every script exports its synthetic trace content to Respan, with the exact run marker in metadata and a per-example custom identifier. Local validators, custom callbacks, and LiteLLM's built-in mock responses require no provider key or model request. Model-cost lookup stays local, and each guard disables Guardrails Hub metrics.
 
-The scripts load `RESPAN_API_KEY`, `RESPAN_BASE_URL`, and optional `RESPAN_MODEL`
-from the repo-root `.env` file. OpenAI-compatible calls are routed through the
-Respan gateway with `RESPAN_API_KEY`.
+| Script | Coverage |
+|---|---|
+| `01_pydantic_parse.py` | Validate a known JSON response against a Pydantic schema. |
+| `02_gateway_structured_generation.py` | Local fixture generation with model, message, and usage attributes. |
+| `03_propagated_attributes.py` | Customer, thread, and exact-run metadata propagation. |
+| `04_async_validation.py` | AsyncGuard parsing and custom async generation. |
+| `05_validator_outcomes.py` | Local validator pass, noop rejection, and fixed output. |
+| `06_streaming.py` | Consume sync and async fixture streams. |
+| `07_reask.py` | Repair invalid output with a second custom LLM call. |
+| `08_content_privacy.py` | Omit guard and validator content while retaining structure. |
+| `09_controlled_error.py` | Preserve native error spans from a raised validation exception. |
 
-## Run
+`02_gateway_structured_generation.py` also supports an explicit live Gateway run with `RESPAN_GUARDRAILS_LIVE=1`; set `RESPAN_MODEL` to select its model. The complete default runner uses fixtures.
 
-```bash
-python python/tracing/guardrails/01_pydantic_parse.py
-python python/tracing/guardrails/02_gateway_structured_generation.py
-python python/tracing/guardrails/03_propagated_attributes.py
-python python/tracing/guardrails/run_all.py
-```
+Guardrails' native streaming spans and links are retained. Source telemetry can omit final model completion content or stream token usage. A noop validator rejection is represented by the validation result, not an execution error. Raised exceptions retain the SDK's native error status.
 
-`01_pydantic_parse.py` and `03_propagated_attributes.py` validate known output.
-`02_gateway_structured_generation.py` calls the configured gateway model.
-Set `RESPAN_EXAMPLE_RUN_ID` to attach one exact marker to all three scenarios.
-
-The examples emit workflow spans with stable names:
-
-| Script | Workflow name |
-|--------|---------------|
-| `01_pydantic_parse.py` | `guardrails_pydantic_parse_workflow` |
-| `02_gateway_structured_generation.py` | `guardrails_gateway_structured_generation_workflow` |
-| `03_propagated_attributes.py` | `guardrails_propagated_attributes_workflow` |
+After running, inspect Respan MCP with the exact `metadata__run_id` filter. Check all trees and full exceptional records for parentage, `guardrail`/`chat` types, model/usage, messages, validator results, reask counts, privacy, and errors. A successful export alone does not establish stored-trace semantic acceptance.

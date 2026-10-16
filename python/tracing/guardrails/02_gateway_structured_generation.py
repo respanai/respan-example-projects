@@ -1,8 +1,15 @@
-"""Generate structured output through the Respan gateway and validate it."""
+"""Generate structured output with a local LiteLLM fixture (live gateway opt-in)."""
 
+import os
 from typing import Literal
 
-from _shared import example_attributes, make_respan, result_summary, set_workflow_input
+from _shared import (
+    example_attributes,
+    local_guard,
+    make_respan,
+    result_summary,
+    set_workflow_input,
+)
 from guardrails import Guard
 from pydantic import BaseModel, Field
 from respan import workflow
@@ -28,13 +35,25 @@ def gateway_structured_generation_workflow(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             num_reasks=1,
+            **(
+                {}
+                if os.getenv("RESPAN_GUARDRAILS_LIVE") == "1"
+                else {
+                    "mock_response": '{"product":"Fixture backpack","reason":"Durable fixture material","confidence":"high"}'
+                }
+            ),
         )
     )
 
 
 def run_gateway_structured_generation() -> None:
     respan, model = make_respan("guardrails-gateway-structured-generation")
-    guard = Guard.for_pydantic(output_class=ProductRecommendation)
+    if os.getenv("RESPAN_GUARDRAILS_LIVE") == "1":
+        os.environ["OPENAI_API_KEY"] = os.environ["RESPAN_API_KEY"]
+        os.environ["OPENAI_API_BASE"] = os.getenv(
+            "RESPAN_BASE_URL", "https://api.respan.ai/api"
+        )
+    guard = local_guard(Guard.for_pydantic(output_class=ProductRecommendation))
     prompt = (
         "Recommend one durable backpack for a weekend hiking trip. "
         "Return JSON with product, reason, and confidence."
@@ -46,6 +65,7 @@ def run_gateway_structured_generation() -> None:
                 model=model,
                 prompt=prompt,
             )
+        assert result["validation_passed"]
         print("Workflow name:", WORKFLOW_NAME)
         print("Raw output:", result["raw_llm_output"])
         print("Validation passed:", result["validation_passed"])
