@@ -1,47 +1,36 @@
-from __future__ import annotations
-
 import os
 
 import vertexai
-from _shared import (
-    example_attributes,
-    load_repo_env,
-    make_respan,
-    marker_for,
-    model_name,
-    workflow_name,
-)
+from _shared import REPO_ROOT, create_respan, example_context, finish_respan
+from dotenv import load_dotenv
 from respan import workflow
 from vertexai.generative_models import GenerativeModel
 
-EXAMPLE_NAME = "live-provider"
+
+@workflow(name="vertexai_live")
+def generate(prompt):
+    return (
+        GenerativeModel(os.getenv("VERTEXAI_MODEL", "gemini-2.5-flash"))
+        .generate_content(prompt)
+        .text
+    )
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def live_provider(prompt: str) -> str:
-    return GenerativeModel(model_name()).generate_content(prompt).text
-
-
-def main() -> None:
-    load_repo_env()
-    required = ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION")
-    if not all(os.getenv(name) for name in required):
-        print(
-            "live Vertex AI skipped: GOOGLE_CLOUD_PROJECT/LOCATION absent", flush=True
-        )
+def main():
+    if os.getenv("VERTEXAI_EXAMPLE_LIVE") != "1":
+        print("live-provider: skipped (set VERTEXAI_EXAMPLE_LIVE=1 to opt in)")
         return
-    marker = marker_for(EXAMPLE_NAME)
+    load_dotenv(REPO_ROOT / ".env", override=False)
     vertexai.init(
         project=os.environ["GOOGLE_CLOUD_PROJECT"],
         location=os.environ["GOOGLE_CLOUD_LOCATION"],
     )
-    respan = make_respan(EXAMPLE_NAME, marker)
+    respan = create_respan()
     try:
-        with example_attributes(EXAMPLE_NAME, marker):
-            result = live_provider("Reply exactly: live Vertex verified")
+        with example_context("live"):
+            print(generate("Reply with one short sentence about tracing."))
     finally:
-        respan.shutdown()
-    print({"example": EXAMPLE_NAME, "marker": marker, "result": result}, flush=True)
+        finish_respan(respan)
 
 
 if __name__ == "__main__":

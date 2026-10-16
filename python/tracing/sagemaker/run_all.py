@@ -1,43 +1,36 @@
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
-SCRIPTS = [
-    "01_invoke_endpoint_text.py",
-    "02_invoke_endpoint_chat_tools.py",
-    "03_invoke_endpoint_stream.py",
-    "04_invoke_endpoint_async.py",
-]
+SCRIPTS = tuple(p.name for p in sorted(Path(__file__).parent.glob("[0-9][0-9]_*.py")))
 
 
-def main() -> None:
+def main():
     root = Path(__file__).resolve().parent
-    env = os.environ.copy()
-    env.setdefault(
-        "RESPAN_EXAMPLE_RUN_ID",
-        datetime.now(timezone.utc).strftime("otel2-sagemaker-%Y%m%dT%H%M%SZ"),
-    )
-    failures: list[str] = []
+    env = {
+        **os.environ,
+        "RESPAN_EXAMPLE_RUN_ID": os.getenv("RESPAN_EXAMPLE_RUN_ID")
+        or "sagemaker-" + uuid4().hex,
+    }
+    failed = []
     for script in SCRIPTS:
-        print(f"\n=== {script} ===", flush=True)
+        print(script, flush=True)
         try:
             result = subprocess.run(
                 [sys.executable, str(root / script)],
-                check=False,
+                cwd=root,
                 env=env,
-                timeout=120,
+                check=False,
+                timeout=60,
             )
+            if result.returncode:
+                failed.append(script)
         except subprocess.TimeoutExpired:
-            failures.append(f"{script}: timeout")
-            continue
-        if result.returncode:
-            failures.append(f"{script}: exit {result.returncode}")
-    if failures:
-        raise SystemExit("; ".join(failures))
+            failed.append(script + " timeout")
+    if failed:
+        raise SystemExit("; ".join(failed))
 
 
 if __name__ == "__main__":

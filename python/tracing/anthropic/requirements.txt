@@ -1,4 +1,6 @@
-anthropic>=0.121.0
+anthropic>=0.39.0
 python-dotenv>=1.0.0
-respan-ai
+respan-tracing>=2.17.0,<3
+respan-sdk>=2.6.26,<3
+opentelemetry-sdk>=1.38.0,<2
 respan-instrumentation-anthropic
