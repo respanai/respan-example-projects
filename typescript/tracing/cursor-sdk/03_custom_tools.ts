@@ -1,36 +1,42 @@
-import {
-  createDemoCursorSDKModule,
-  createRespan,
-  logExampleResult,
-  runWithExampleTrace,
-} from "./_shared.js";
-
-const workflowName = "TypeScript Cursor SDK Custom Tools Example";
-
-export async function customToolsExample(): Promise<void> {
-  const cursorSdk = createDemoCursorSDKModule();
-  const respan = createRespan("typescript-cursor-sdk-custom-tools-example", cursorSdk);
-  await respan.initialize();
+import assert from "node:assert/strict";
+import { scenario } from "./_shared.js";
+import { nativeLocalFixture } from "./_native_fixture.mjs";
+await scenario("custom-tools", async (sdk) => {
+  let observed: any;
+  const customTools = {
+    lookup_fixture: {
+      description: "Return controlled values",
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      annotations: { readOnlyHint: true },
+      execute(args: any, context: any) {
+        observed = { args, context };
+        return { value: 0, empty: "", enabled: false };
+      },
+    },
+  };
+  const local = await nativeLocalFixture(sdk, customTools);
+  if (!local)
+    return {
+      available: false,
+      reason:
+        "Native local fixture requires current public JsonlLocalAgentStore; older SDK cloud cases run separately.",
+    };
   try {
-    const result = await runWithExampleTrace(respan, workflowName, async () => {
-      const agent = await cursorSdk.Agent.create({ name: "cursor_custom_tools_agent", model: { id: "cursor-small" } });
-      const run = await agent.send("Look up Tokyo weather with a local custom tool.", {
-        local: {
-          customTools: {
-            lookup_weather: {
-              description: "Return deterministic weather for a city.",
-              inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
-              execute: async ({ city }: { city: string }) => ({ city, condition: "clear", temperatureC: 21 }),
-            },
-          },
-        },
-      });
-      const waitResult = await run.wait();
-      return { runId: run.id, waitResult };
-    });
-    logExampleResult(workflowName, { runId: result.runId, status: result.waitResult.status, result: result.waitResult.result });
+    const agent = await sdk.Agent.create(local.options);
+    const run = await agent.send("fixture");
+    const result = await run.wait();
+    await agent[Symbol.asyncDispose]();
+    assert.equal(observed.context.toolCallId, "native-local-call");
+    assert.equal(observed.context.sessionId, "native-child-session");
+    assert.equal(result.usage?.totalTokens, 0);
+    return {
+      status: result.status,
+      runId: run.id,
+      usage: result.usage,
+      toolContext: observed.context,
+    };
   } finally {
+    await local.close();
   }
-}
-
-await customToolsExample();
+});

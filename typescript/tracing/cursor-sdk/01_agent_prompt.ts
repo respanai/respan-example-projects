@@ -1,26 +1,8 @@
-import {
-  createDemoCursorSDKModule,
-  createRespan,
-  logExampleResult,
-  runWithExampleTrace,
-} from "./_shared.js";
-
-const workflowName = "TypeScript Cursor SDK Agent Prompt Example";
-
-export async function agentPromptExample(): Promise<void> {
-  const cursorSdk = createDemoCursorSDKModule();
-  const respan = createRespan("typescript-cursor-sdk-agent-prompt-example", cursorSdk);
-  await respan.initialize();
-  try {
-    const result = await runWithExampleTrace(respan, workflowName, async () => {
-      return await cursorSdk.Agent.prompt("Summarize how Cursor SDK runs are traced.", {
-        name: "cursor_prompt_agent",
-        model: { id: "cursor-small" },
-      });
-    });
-    logExampleResult(workflowName, { status: result.status, result: result.result, model: result.model });
-  } finally {
-  }
-}
-
-await agentPromptExample();
+import assert from "node:assert/strict";
+import { scenario } from "./_shared.js";
+await scenario("prompt", async (sdk, fixture) => {
+  const result = await sdk.Agent.prompt("fixture prompt", fixture.options);
+  assert.equal(result.status, "finished");
+  assert.equal(result.result, "native Cursor answer");
+  return { status: result.status, runId: result.id, usage: result.usage };
+});

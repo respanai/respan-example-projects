@@ -4,27 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "01:chat": "tsx 01_chat_completion.ts",
-    "02:chat-stream": "tsx 02_chat_streaming.ts",
-    "03:tools": "tsx 03_tool_calls.ts",
-    "04:text-embedding": "tsx 04_text_completion_embedding.ts",
-    "05:image-rerank": "tsx 05_image_rerank.ts",
-    "06:audio": "tsx 06_audio_transcription_translation.ts",
-    "07:error": "tsx 07_expected_error.ts",
+    "all": "tsx run_all.ts",
     "examples": "tsx run_all.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@respan/instrumentation-together-ai": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-together-ai",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^16.4.7",
-    "together-ai": "^0.40.0",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "@respan/respan": "2.5.0",
+    "@respan/respan-sdk": "1.3.4",
+    "@respan/tracing": "1.6.1",
+    "together-ai": "0.58.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
+    "tsx": "^4.20.6",
+    "@traceloop/ai-semantic-conventions": "^0.13.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.29"
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
   }
 }
