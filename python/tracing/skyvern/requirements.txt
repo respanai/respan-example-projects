@@ -1,0 +1,7 @@
+# Skyvern example - dependencies. Python 3.11-3.13.
+respan-ai>=4.2.4
+respan-tracing>=2.23.0                       # run_all.py's live checks (respan_tracing.testing.live)
+respan-instrumentation-skyvern>=0.1.0
+skyvern[local]>=1.0.56,<2
+python-dotenv>=1.0.0
+# then: python -m playwright install chromium

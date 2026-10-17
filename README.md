@@ -17,6 +17,9 @@ python/
     langchain/            # LangChain agent example
     cursor-sdk/           # Cursor SDK hook replay tracing examples
     browser-use/          # browser-use agents: 27 scenarios mirroring browser-use's examples, live trace checks
+    playwright/           # Playwright for Python: 14 scenarios, every Playwright call as a span, live trace checks
+    skyvern/              # Skyvern browser agents (local mode): 8 scenarios, live trace checks
+    stagehand/            # Stagehand v4 (Python) on local Chrome: 15 scenarios, live trace checks
   gateway/
     model-testing/        # Platform Live model availability + separate streaming performance benchmark
     google-genai/         # Google Gemini SDK example
