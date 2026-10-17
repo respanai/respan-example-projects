@@ -1,0 +1,3 @@
+# Only for verify_live.py, which reads the traces back from Respan.
+respan-tracing>=2.23.0
+python-dotenv>=1.0.0

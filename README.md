@@ -35,6 +35,9 @@ typescript/
     eve/                  # Eve agent framework with Respan tracing
     vercel-tracing/       # Vercel AI SDK + Next.js with @respan/exporter-vercel
     mastra/               # Mastra framework with @respan/exporter-vercel
+    playwright/           # Playwright (Node): 14 scenarios, every Playwright call as a span, live trace checks
+    puppeteer/            # Puppeteer: 15 scenarios, every Puppeteer call as a span, live trace checks
+    stagehand/            # Stagehand v4 (TypeScript) on local Chrome: 15 scenarios, live trace checks
   gateway/
     google-genai/         # Google Gemini SDK example
 
