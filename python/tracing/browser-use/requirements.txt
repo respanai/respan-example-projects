@@ -1,6 +1,6 @@
 # browser-use example - dependencies. Python 3.11-3.13.
 respan-ai>=4.2.4
-respan-tracing>=2.22.0                       # run_all.py's live checks (respan_tracing.testing.live)
-respan-instrumentation-browser-use>=0.1.3
+respan-tracing>=2.24.0                       # session replay + run_all.py's live checks (respan_tracing.testing.live)
+respan-instrumentation-browser-use>=0.2.0      # record_session
 browser-use>=0.13.11,<0.14
 python-dotenv>=1.0.0
