@@ -55,7 +55,7 @@ try:  # optional: used when present (it carries its own CA bundle)
 except ImportError:
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.2.1"
+HOOK_VERSION = "2.3.0"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
@@ -553,9 +553,6 @@ class FileProcessor:
             "input": truncate(text),
             "output": "",
         }
-        # Emitted now (end = start) so the turn's children are never orphans while it
-        # runs, and again with the same span id when it ends.
-        self.emit_turn(self.p["turn"])
 
     def close_turn(self) -> None:
         turn = self.p.get("turn")
@@ -587,10 +584,14 @@ class FileProcessor:
 
     # -- sub-agent root ------------------------------------------------------ #
 
-    def open_agent(self, spawn: Dict[str, Any], line: Dict[str, Any], ts: Optional[float]) -> None:
+    def open_agent(self, spawn: Dict[str, Any], line: Dict[str, Any], ts: Optional[float], run: int = 0) -> None:
+        # run > 0: the sub-agent was continued (SendMessage) after it finished; each
+        # continuation is its own Sub-agent span under the same Agent call.
+        key = f"agent:{self.agent_id}" if run == 0 else f"agent:{self.agent_id}:run{run}"
         self.p["agent"] = {
             "trace": spawn["trace"],
-            "span": span_id_for(self.session_id, f"agent:{self.agent_id}"),
+            "span": span_id_for(self.session_id, key),
+            "run": run,
             "parent": spawn["span"],
             "start": ts,
             "end": ts,
@@ -598,9 +599,6 @@ class FileProcessor:
             "output": "",
             "closed": False,
         }
-        # Emitted at first sight (end = start) so a long-running or background
-        # sub-agent's spans always have their parent; re-emitted when it finishes.
-        self.emit_agent(self.p["agent"])
 
     def close_agent(self) -> None:
         agent = self.p.get("agent")
@@ -618,6 +616,8 @@ class FileProcessor:
     def emit_agent(self, agent: Dict[str, Any]) -> None:
         meta = self.agent_meta
         name = meta.get("description") or meta.get("agentType") or "sub-agent"
+        if agent.get("run"):
+            name = f"{name} (continued {agent['run']})"
         self.builder.add(
             trace_id=agent["trace"],
             span_id=agent["span"],
@@ -743,19 +743,7 @@ class FileProcessor:
         if name in AGENT_TOOL_NAMES:
             # Sub-agents spawned by this call nest under this tool span, in this trace.
             self.session["spawns"][tool_id] = {"trace": trace, "span": span}
-            # A foreground sub-agent's result only arrives when it finishes: emit the
-            # call now so the sub-agent has its parent meanwhile (re-emitted at result).
-            self.builder.add(
-                trace_id=trace,
-                span_id=span,
-                parent_id=parent,
-                name=f"Tool: {name}",
-                log_type="tool",
-                start=ts,
-                end=ts,
-                input_text=self.p["tools"][tool_id]["input"],
-                metadata={"claude_code.agent_id": self.agent_id},
-            )
+
 
     def finish_tool(
         self,
@@ -851,9 +839,15 @@ class FileProcessor:
                 self.open_agent(spawn, line, ts)
                 self.p["last_input"] = self.p["agent"]["input"]
             elif self.p["agent"].get("closed") and is_prompt_line(line):
-                # A finished sub-agent continued (SendMessage): reopen under a new root
-                # span is not possible without changing ids, so keep nesting under it.
-                pass
+                # A finished sub-agent was continued (SendMessage): a fresh root, so the
+                # new work does not nest under a root that already ended.
+                previous = self.p["agent"]
+                self.flush_message()
+                self.open_agent({"trace": previous["trace"], "span": previous["parent"]}, line, ts, run=int(previous.get("run", 0)) + 1)
+                self.p["last_input"] = self.p["agent"]["input"]
+                closed = self.session.setdefault("closed_agents", [])
+                if self.agent_id in closed:
+                    closed.remove(self.agent_id)
         holder = self.p.get("agent") if self.kind == "agent" else self.p.get("turn")
         if holder is not None and ts:
             holder["end"] = ts
@@ -1144,16 +1138,15 @@ def process_session(
         progressed_any = False
         now = time.time()
         for agent_id, path, meta in subagent_files(transcript, session_id):
-            if agent_id in session.get("closed_agents", []):
-                close = False
-            else:
-                idle = now - (path.stat().st_mtime if path.exists() else now)
-                close = (
-                    session_end
-                    or agent_id in session.get("close_requests", [])
-                    or (turn_done and idle > SUBAGENT_IDLE_CLOSE_SECONDS)
-                    or idle > SUBAGENT_STALE_CLOSE_SECONDS
-                )
+            # Closing an already-closed sub-agent is a no-op; a continued one (new lines
+            # after it finished) reopens while its file is read, so decide regardless.
+            idle = now - (path.stat().st_mtime if path.exists() else now)
+            close = (
+                session_end
+                or agent_id in session.get("close_requests", [])
+                or (turn_done and idle > SUBAGENT_IDLE_CLOSE_SECONDS)
+                or idle > SUBAGENT_STALE_CLOSE_SECONDS
+            )
             progressed, read = process_file(
                 session_id=session_id, session=session, state=state, path=path, kind="agent",
                 api_key=api_key, base_url=base_url, agent_id=agent_id, agent_meta=meta, close=close,
