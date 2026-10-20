@@ -52,7 +52,7 @@ try:
 except ImportError:  # pragma: no cover - reported at runtime
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.0.0"
+HOOK_VERSION = "2.0.2"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
