@@ -21,7 +21,8 @@ The hook itself returns immediately; the work runs in a detached worker.
 Usage:
     Copy this file to ~/.claude/hooks/respan_hook.py and register it for the
     Stop, SubagentStop and PostToolUse hooks in ~/.claude/settings.json
-    (see .claude/settings.json.example). Requires Python 3.8+ and ``requests``.
+    (see .claude/settings.json.example). Python 3.8+; uses ``requests`` when
+    installed and the standard library otherwise.
 
 Environment:
     TRACE_TO_RESPAN=true      enable tracing
@@ -45,12 +46,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-try:
+import ssl
+import urllib.error
+import urllib.request
+
+try:  # optional: used when present (it carries its own CA bundle)
     import requests
-except ImportError:  # pragma: no cover - reported at runtime
+except ImportError:
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.2.0"
+HOOK_VERSION = "2.2.1"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
@@ -959,12 +964,34 @@ def batches(spans: List[Dict[str, Any]]) -> Iterator[List[Dict[str, Any]]]:
         yield batch
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """System CAs, or certifi's bundle when installed (python.org macOS builds ship
+    without system CAs until 'Install Certificates' is run)."""
+    try:
+        import certifi  # noqa: PLC0415 - optional
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+def http_post(url: str, body: bytes, headers: Dict[str, str], timeout: float) -> Tuple[int, str]:
+    """POST: (status, body text). ``requests`` when installed, else the standard library."""
+    if requests is not None:
+        response = requests.post(url, data=body, headers=headers, timeout=timeout)
+        return response.status_code, response.text[:2000]
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:  # nosec B310 - https URL from config
+            return response.status, response.read(2000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(2000).decode("utf-8", "replace")
+
+
 def send_spans(spans: List[Dict[str, Any]], api_key: str, base_url: str) -> None:
     """POST every span; raises SendError unless Respan accepted all of them."""
     if not spans:
         return
-    if requests is None:
-        raise SendError("the requests package is not installed")
     url = base_url.rstrip("/") + "/v2/traces"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     for batch in batches(spans):
@@ -972,15 +999,15 @@ def send_spans(spans: List[Dict[str, Any]], api_key: str, base_url: str) -> None
         last_error = ""
         for attempt in range(SEND_ATTEMPTS):
             try:
-                response = requests.post(url, data=body.encode("utf-8"), headers=headers, timeout=SEND_TIMEOUT_SECONDS)
+                status, text = http_post(url, body.encode("utf-8"), headers, SEND_TIMEOUT_SECONDS)
             except Exception as exc:  # network errors are retried
                 last_error = str(exc)
             else:
-                if response.status_code < 300:
+                if status < 300:
                     last_error = ""
                     break
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
+                last_error = f"HTTP {status}: {text[:200]}"
+                if 400 <= status < 500 and status not in (408, 429):
                     raise SendError(last_error)
             touch_lock()
             time.sleep(min(2 ** attempt, 8))

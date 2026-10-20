@@ -44,7 +44,7 @@ Session (thread claudecode_<session id>)
 
 ## Setup
 
-Requires Python 3.8+ and `requests` (`pip install -r requirements.txt`).
+Requires Python 3.8+. It uses `requests` when installed and the standard library otherwise (with `certifi`'s CA bundle when available), so it works from any `python3` on your PATH.
 
 1. Copy the hook:
 
@@ -114,7 +114,7 @@ tail -f ~/.claude/state/respan_hook.log      # errors are always logged; RESPAN_
 ## Tests
 
 ```bash
-pip install pytest requests
+pip install pytest
 pytest tests
 ```
 

@@ -1,6 +1,6 @@
 """Tests for respan_hook.py, on synthetic Claude Code transcripts.
 
-Run: pip install pytest requests && pytest python/dev-tools/claude-code/tests
+Run: pip install pytest && pytest python/dev-tools/claude-code/tests
 """
 
 import importlib
@@ -112,12 +112,6 @@ class Transcript:
 # --------------------------------------------------------------------------- #
 
 
-class FakeResponse:
-    def __init__(self, status):
-        self.status_code = status
-        self.text = "ok" if status < 300 else "error"
-
-
 class Collector:
     def __init__(self):
         self.payloads = []
@@ -125,16 +119,16 @@ class Collector:
         self.delay = 0.0
         self.lock = threading.Lock()
 
-    def post(self, url, data=None, headers=None, timeout=None):
+    def post(self, url, data, headers, timeout):
         assert url.endswith("/v2/traces")
         if self.delay:
             time.sleep(self.delay)
         with self.lock:
             if self.fail:
                 self.fail -= 1
-                return FakeResponse(503)
+                return 503, "unavailable"
             self.payloads.append(json.loads(data))
-        return FakeResponse(200)
+        return 200, "ok"
 
     @property
     def all_spans(self):
@@ -168,7 +162,7 @@ def env(tmp_path, monkeypatch):
     hook = importlib.import_module("respan_hook")
     hook.SEND_ATTEMPTS = 1
     collector = Collector()
-    monkeypatch.setattr(hook.requests, "post", collector.post)
+    monkeypatch.setattr(hook, "http_post", collector.post)
     monkeypatch.setattr(hook.time, "sleep", lambda s: None)
     return hook, collector, Transcript(tmp_path)
 
