@@ -1,197 +1,122 @@
-# Claude Code Integration with Respan
+# Claude Code + Respan
 
-This integration automatically sends Claude Code conversation traces to Respan for observability and monitoring.
+Trace every Claude Code session in Respan, including every sub-agent it spawns, while
+the session runs. Built for long sessions: hours of work and dozens of sub-agents are
+captured in full, with every parent-child relationship kept.
 
-## Overview
-
-Claude Code is Anthropic's agentic coding tool that lives in your terminal. This integration uses Claude Code's hooks system to automatically capture and send conversation traces to Respan after each response.
-
-## Features
-
-- ✅ **Automatic tracing** - Captures every Claude Code turn automatically
-- ✅ **Hierarchical traces** - Each turn becomes a trace with chat + tool spans
-- ✅ **Thread grouping** - All turns in a session grouped by `thread_identifier`
-- ✅ **Incremental processing** - Processes only new messages (tracks state)
-- ✅ **Error resilient** - Graceful failures don't break Claude Code
-
-## Prerequisites
-
-1. **Claude Code** - Install from [code.claude.com](https://code.claude.com)
-2. **Python 3.9+** - Verify with `python3 --version`
-3. **Respan API Key** - Get from [platform.respan.ai](https://platform.respan.ai/platform/api/api-keys)
-
-## Installation
-
-### Step 1: Install Dependencies
-
-```bash
-cd example_scripts/python/claude_code
-pip install -r requirements.txt
-```
-
-### Step 2: Copy Hook Script
-
-Copy the hook script to Claude Code's hooks directory:
-
-```bash
-# Create hooks directory if it doesn't exist
-mkdir -p ~/.claude/hooks
-
-# Copy the hook script
-cp respan_hook.py ~/.claude/hooks/
-
-# Make it executable
-chmod +x ~/.claude/hooks/respan_hook.py
-```
-
-### Step 3: Configure Global Hook
-
-Add the Stop hook to your global Claude Code settings (`~/.claude/settings.json`):
-
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "python3 ~/.claude/hooks/respan_hook.py"
-      }]
-    }]
-  }
-}
-```
-
-### Step 4: Enable Per-Project
-
-For each project where you want tracing, create `.claude/settings.local.json`:
-
-```json
-{
-  "env": {
-    "TRACE_TO_RESPAN": "true",
-    "RESPAN_API_KEY": "your-api-key-here",
-    "RESPAN_BASE_URL": "https://api.respan.ai/api"
-  }
-}
-```
-
-**Note:** Tracing is opt-in per project. The hook runs globally but exits immediately if `TRACE_TO_RESPAN` is not set to `"true"`.
-
-## How It Works
-
-1. **Hook Execution**: After each Claude Code response, the Stop hook runs
-2. **Transcript Reading**: Script reads the transcript path from stdin (piped by Claude Code) or falls back to finding the latest `*.jsonl` in `~/.claude/projects/`
-3. **Incremental Processing**: Reads only new messages since last run (tracks state)
-4. **Turn Grouping**: Groups messages into turns (user → assistant → tools)
-5. **Span Creation**: Converts each turn into Respan spans:
-   - Chat span (root) with `log_type: "chat"`
-   - Tool spans (children) with `log_type: "tool"`
-6. **Batch Sending**: Sends spans via `/api/traces/ingest/` endpoint
-7. **State Update**: Saves progress to `~/.claude/state/respan_state.json`
-
-## Data Structure
-
-Each turn becomes a separate trace:
+## What you get
 
 ```
-Session (sessionId)
-  ├─ Turn 1 → Trace (trace_unique_id: "sessionId_turn_1")
-  │   ├─ Chat Span (root, span_parent_id: null)
-  │   └─ Tool Spans (children, span_parent_id: chat_span_id)
-  │
-  ├─ Turn 2 → Trace (trace_unique_id: "sessionId_turn_2")
-  │   └─ Chat Span (root)
-  │
-  └─ Turn 3 → Trace (trace_unique_id: "sessionId_turn_3")
-      └─ Chat Span (root)
+Session (thread claudecode_<session id>)
+├─ Trace: Turn 1: "Investigate the bug"          root span, links to nothing
+│  ├─ claude.chat (claude-opus-...)               one span per model response: tokens, cache, model
+│  │  └─ Thinking
+│  ├─ Tool: Read / Bash / Edit ...                input, output, duration, errors
+│  └─ Tool: Agent                                 the call that spawned a sub-agent
+│     └─ Sub-agent: <description>                 the sub-agent's own run
+│        ├─ claude.chat ...                       its model calls, with their own tokens
+│        ├─ Tool: Grep ...
+│        └─ Tool: Agent                           sub-agents of sub-agents nest the same way
+│           └─ Sub-agent: ...
+├─ Trace: Turn 2: ...                             links to Turn 1 (respan.link.type = previous_turn)
+└─ ...
 ```
 
-All turns share the same `thread_identifier` (sessionId) for grouping in the Threads view.
+- **One trace per turn**, so a 10-hour session never keeps one trace open. Every turn's
+  root links to the previous turn's root, and every span of the session carries the
+  same session and thread id (`claudecode_<session id>`).
+- **Sub-agents are nested** under the `Tool: Agent` call that spawned them, at any
+  depth. A background sub-agent that finishes during a later turn still appears in the
+  trace of the turn that started it. Each `Sub-agent` span also links to that call
+  (`spawned_by`) and carries `claude_code.agent_id`, `agent_type` and `spawn_depth`.
+- **Resumed sessions** (`--resume`, `--continue`) link their first turn to the last turn
+  of the session they resumed (`resumed_from`) and do not re-send the copied history.
+- **Sent while the session runs**: on every tool call, sub-agent finish and response,
+  not only at the end.
+- **Nothing lost, nothing duplicated**: the hook reads each transcript from where it
+  stopped (it never re-reads a file from the start), only moves on after Respan
+  accepted the spans, and derives span ids from the transcript, so a retry re-sends
+  the same ids.
+- **Never slows Claude Code down**: the hook queues the event and returns
+  (about 0.1 s); a background worker does the export. It always exits 0 and prints
+  nothing.
 
-## Environment Variables
+## Setup
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `TRACE_TO_RESPAN` | Set to `"true"` to enable tracing | Yes |
-| `RESPAN_API_KEY` | Your Respan API key | Yes |
-| `RESPAN_BASE_URL` | API base URL (default: `https://api.respan.ai/api`) | No |
-| `CC_RESPAN_DEBUG` | Set to `"true"` for verbose debug logging | No |
-| `RESPAN_METADATA` | JSON string merged into every span's metadata (e.g. `'{"user_id":"u1"}'`) | No |
-| `CC_RESPAN_MAX_CHARS` | Max characters for tool input/output truncation (default: `4000`) | No |
+Requires Python 3.8+ and `requests` (`pip install -r requirements.txt`).
 
-## Troubleshooting
+1. Copy the hook:
 
-### No traces appearing in Respan
-
-1. **Check hook is running:**
    ```bash
-   tail -f ~/.claude/state/respan_hook.log
+   mkdir -p ~/.claude/hooks
+   cp respan_hook.py ~/.claude/hooks/
    ```
 
-2. **Verify environment variables** in `.claude/settings.local.json`:
-   - `TRACE_TO_RESPAN` must be `"true"` (string, not boolean)
-   - API key must be correct
+2. Register it for `Stop`, `SubagentStop` and `PostToolUse` in `~/.claude/settings.json`
+   (see `.claude/settings.json.example`):
 
-3. **Enable debug mode:**
    ```json
    {
-     "env": {
-       "CC_RESPAN_DEBUG": "true"
+     "hooks": {
+       "Stop":         [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/respan_hook.py" }] }],
+       "SubagentStop": [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/respan_hook.py" }] }],
+       "PostToolUse":  [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/respan_hook.py" }] }]
      }
    }
    ```
 
-4. **Check script is executable:**
-   ```bash
-   chmod +x ~/.claude/hooks/respan_hook.py
+   `Stop` alone still works: everything is sent at the end of each response instead
+   of as it happens.
+
+3. Turn it on (globally, or per project in `.claude/settings.local.json`):
+
+   ```json
+   {
+     "env": {
+       "TRACE_TO_RESPAN": "true",
+       "RESPAN_API_KEY": "your-api-key"
+     }
+   }
    ```
 
-### Permission errors
+The first event of a session that started before you installed the hook sends the
+whole session so far.
 
-Make sure the hook script is executable:
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `TRACE_TO_RESPAN` | `"true"` to enable (required) |
+| `RESPAN_API_KEY` | Your Respan API key (required) |
+| `RESPAN_BASE_URL` | Default `https://api.respan.ai/api`; enterprise: `https://endpoint.respan.ai/api` |
+| `RESPAN_CUSTOMER_ID` | Customer identifier on every span (default `claude-code`) |
+| `RESPAN_METADATA` | JSON object added to every span's metadata, e.g. `'{"team":"core"}'` |
+| `CC_RESPAN_MAX_CHARS` | Max characters kept per input/output (default `4000`) |
+| `RESPAN_HOOK_DEBUG` | `1` for a verbose log |
+
+## Files it writes
+
+Only under `~/.claude/state/`: `respan_state_v2.json` (where each transcript was read
+up to), `respan_hook_v2.{events,lock,dirty}` (the event queue and worker lock) and
+`respan_hook.log` (rotated at 5 MB). Transcripts are only read. The `respan_state.json`
+of the previous version of this hook is not used.
+
+## Troubleshooting
+
 ```bash
-chmod +x ~/.claude/hooks/respan_hook.py
+tail -f ~/.claude/state/respan_hook.log      # errors are always logged; RESPAN_HOOK_DEBUG=1 for more
 ```
 
-### Hook script errors
+- Nothing in Respan: check `TRACE_TO_RESPAN` is the string `"true"` and the key is right.
+- Respan unreachable: events wait in `respan_hook_v2.events` and are retried on the next hook run.
 
-Test the script manually:
+## Tests
+
 ```bash
-TRACE_TO_RESPAN=true \
-RESPAN_API_KEY="your-key" \
-python3 ~/.claude/hooks/respan_hook.py
+pip install pytest requests
+pytest tests
 ```
 
-Check the log file:
-```bash
-cat ~/.claude/state/respan_hook.log
-```
-
-## Viewing Traces
-
-Open your Respan dashboard to see:
-- **Threads view**: All turns in a session as a linear conversation
-- **Traces view**: Each turn as a hierarchical trace with spans
-- **Logs view**: Individual spans/logs
-
-Filter by `thread_identifier` to see all turns from a Claude Code session.
-
-## Files
-
-- `respan_hook.py` - Main hook script (copy to `~/.claude/hooks/`)
-- `requirements.txt` - Python dependencies
-- `README.md` - This file
-
-## State Files
-
-The hook creates state files in `~/.claude/state/`:
-- `respan_state.json` - Tracks last processed line per session
-- `respan_hook.log` - Debug logs
-
-## Security Note
-
-The hook script runs with your user's permissions. Review the script before installing, especially if downloading from an untrusted source.
-
-## License
-
-MIT
+The tests build synthetic transcripts (plain turns, parallel and nested sub-agents, a
+background sub-agent finishing in a later turn, a 2,000-turn session, resume, send
+failures, concurrent hook runs) and check every exported span.

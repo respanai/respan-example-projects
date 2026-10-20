@@ -1,14 +1,13 @@
 {
   "hooks": {
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/respan_hook.py"
-          }
-        ]
-      }
+      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/respan_hook.py" }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/respan_hook.py" }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/respan_hook.py" }] }
     ]
   }
 }
