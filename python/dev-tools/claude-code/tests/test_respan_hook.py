@@ -586,7 +586,9 @@ def test_every_span_is_sent_once_and_roots_arrive_when_they_close(env):
     fire(hook, t, "PostToolUse", agent_id="fff")
     names = {s["name"].split(":")[0] for s in collector.spans}
     assert "Turn 1" not in names and "Sub-agent" not in names  # still running
-    assert {"Tool", "claude.chat (claude-opus-5-5)"} <= {s["name"] for s in collector.spans} | {"Tool"}
+    # Finished tool calls are out already; a response's chat span goes out when the next
+    # response starts (its tool calls may still be writing).
+    assert {"Tool: Bash", "Tool: Grep"} <= {s["name"] for s in collector.spans}
     t.reply("mf2", "F done", path=f, agent="fff")
     t.result("toolu_F", "F result", use_result={"agentId": "fff", "status": "completed"})
     t.reply("mg2", "G done", path=g, agent="ggg")
@@ -685,3 +687,27 @@ def test_history_reappended_to_the_transcript_is_not_sent_again(env):
     assert turns == ["Turn 1", "Turn 2", "Turn 3"]
     three = next(s for s in collector.spans if s["name"].startswith("Turn 3"))
     assert three["name"] == "Turn 3: Three"
+
+
+def test_tool_results_between_lines_of_one_response_do_not_split_it(env):
+    """A response with two tool calls: the first tool runs (and its result is written)
+    before the response's second tool_use line. Still one chat span, sent once."""
+    hook, collector, t = env
+    t.prompt("Edit and test")
+    usage = {"input_tokens": 3, "output_tokens": 40}
+    t.line("assistant", {"id": "msg_x", "role": "assistant", "model": "claude-opus-5-5", "usage": usage,
+                         "content": [{"type": "tool_use", "id": "toolu_e", "name": "Edit", "input": {"file_path": "/a"}}]},
+           requestId="req_x")
+    t.result("toolu_e", "edited")
+    t.line("assistant", {"id": "msg_x", "role": "assistant", "model": "claude-opus-5-5", "usage": usage,
+                         "content": [{"type": "tool_use", "id": "toolu_b", "name": "Bash", "input": {"command": "pytest"}}]},
+           requestId="req_x")
+    t.result("toolu_b", "passed")
+    t.reply("msg_y", "All green")
+    fire(hook, t, "Stop")
+    assert_sent_once(collector)
+    chats = [s for s in collector.spans if s["name"].startswith("claude.chat")]
+    assert len(chats) == 2
+    first = next(s for s in chats if "tool_calls" in json.dumps(s))
+    calls = json.loads(attrs(first)["gen_ai.completion.0.tool_calls"])
+    assert [c["function"]["name"] for c in calls] == ["Edit", "Bash"]

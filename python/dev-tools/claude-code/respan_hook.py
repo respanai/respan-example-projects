@@ -55,7 +55,7 @@ try:  # optional: used when present (it carries its own CA bundle)
 except ImportError:
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.3.1"
+HOOK_VERSION = "2.3.2"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
@@ -839,7 +839,9 @@ class FileProcessor:
         )
 
     def on_tool_results(self, line: Dict[str, Any], ts: Optional[float]) -> None:
-        self.flush_message()
+        # No flush here: Claude Code starts running a response's first tool before it
+        # writes the response's later blocks, so a tool result can sit between two
+        # lines of the same response. The response is flushed when the next one starts.
         inputs = []
         for block in blocks(content_of(line), "tool_result"):
             tool_id = str(block.get("tool_use_id") or "")
