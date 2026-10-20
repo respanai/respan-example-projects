@@ -266,10 +266,10 @@ def test_plain_turn_exports_root_llm_tool_and_ids(env):
     assert names == ["Tool", "Turn 1", "claude.chat", "claude.chat"]
     first_llm = next(s for s in spans if attrs(s).get("gen_ai.completion.0.reasoning_content") == "hmm")
     assert attrs(first_llm)["gen_ai.completion.0.content"] == "Reading"
-    assert attrs(root)["respan.metadata.claude_code.turn"] == "1"
-    assert_plain_spans(spans)
     root = next(s for s in spans if s["name"].startswith("Turn 1"))
     assert "parentSpanId" not in root
+    assert attrs(root)["respan.metadata.claude_code.turn"] == "1"
+    assert_plain_spans(spans)
     assert len({s["traceId"] for s in spans}) == 1
     index = by_id(spans)
     for span in spans:
