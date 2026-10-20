@@ -457,3 +457,19 @@ def test_hook_entrypoint_returns_fast_and_queues_the_event(env, monkeypatch):
     hook.main()
     assert time.monotonic() - t0 < 0.5
     assert started and hook.EVENTS_FILE.exists()
+
+
+def test_finished_subagents_close_without_subagentstop(env):
+    """Backfill: sub-agents that finished before the hook ran never get a SubagentStop."""
+    hook, collector, t = env
+    one_turn_with_subagents(t)
+    fire(hook, t, "PostToolUse")  # no SubagentStop, no Stop
+    roots = {attrs(s)["respan.metadata.claude_code.agent_id"] for s in collector.spans if s["name"].startswith("Sub-agent")}
+    assert roots == {"aaa", "bbb", "ccc"}  # foreground agents whose results came back; ddd still running
+    index = by_id(collector.spans)
+    for span in collector.spans:
+        if span.get("parentSpanId"):
+            parent = index.get(span["parentSpanId"])
+            # every exported sub-agent child has its sub-agent root exported too
+            if attrs(span).get("respan.metadata.claude_code.agent_id") in roots:
+                assert parent is not None

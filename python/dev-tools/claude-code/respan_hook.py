@@ -85,8 +85,11 @@ SEND_ATTEMPTS = 3
 SEND_TIMEOUT_SECONDS = 30
 LOCK_STALE_SECONDS = 15 * 60
 STATE_RETENTION_SECONDS = 30 * 24 * 3600
-# A sub-agent whose file has not grown for this long is closed when the turn ends.
+# A sub-agent whose file has not grown for this long is closed when the turn ends,
+# or on any hook event after the longer timeout (sub-agents that finished before
+# the hook was installed never get a SubagentStop).
 SUBAGENT_IDLE_CLOSE_SECONDS = 120
+SUBAGENT_STALE_CLOSE_SECONDS = 600
 
 WORKFLOW_NAME = "claude-code"
 AGENT_TOOL_NAMES = ("Agent", "Task")
@@ -774,6 +777,11 @@ class FileProcessor:
                 metadata["claude_code.spawned_agent_id"] = spawned
                 metadata["claude_code.spawned_agent_status"] = use_result.get("status")
                 self.session["agent_tools"][str(spawned)] = tool_id
+                if use_result.get("status") not in (None, "async_launched", "running"):
+                    # A foreground sub-agent returned: it is finished.
+                    done = self.session.setdefault("close_requests", [])
+                    if str(spawned) not in done:
+                        done.append(str(spawned))
         is_error = bool(result and result.get("is_error"))
         output = "(no result recorded)" if missing else format_tool_output((result or {}).get("content"))
         self.builder.add(
@@ -1120,6 +1128,7 @@ def process_session(
                     session_end
                     or agent_id in session.get("close_requests", [])
                     or (turn_done and idle > SUBAGENT_IDLE_CLOSE_SECONDS)
+                    or idle > SUBAGENT_STALE_CLOSE_SECONDS
                 )
             progressed, read = process_file(
                 session_id=session_id, session=session, state=state, path=path, kind="agent",
