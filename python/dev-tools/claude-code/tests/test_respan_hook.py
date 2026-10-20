@@ -566,8 +566,8 @@ def assert_sent_once(collector):
 def test_every_span_is_sent_once_and_roots_arrive_when_they_close(env):
     """Mid-turn: a foreground sub-agent still working (its Agent call has no result yet)
     and a background one. Their spans go out as they happen; the containers (turn root,
-    sub-agent roots, the Agent call) go out once, when they close. The trace view shows
-    children whose parent has not arrived under a 'running' placeholder."""
+    sub-agent roots, the Agent call) go out once, when they close. Until then the trace
+    shows their children at the top level; they nest once the parent arrives."""
     hook, collector, t = env
     t.prompt("Big task")
     t.reply("m1", "Starting", tools=[
