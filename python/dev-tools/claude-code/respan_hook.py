@@ -55,7 +55,7 @@ try:  # optional: used when present (it carries its own CA bundle)
 except ImportError:
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.3.2"
+HOOK_VERSION = "2.3.3"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
@@ -294,7 +294,7 @@ def prune_state(state: Dict[str, Any], now: float) -> None:
 
 
 class SeenLines:
-    """Transcript line uuids already exported, per session.
+    """Transcript line uuids already exported (and span ids already sent), per session.
 
     Claude Code sometimes re-appends a session's whole history to its transcript (same
     uuids and timestamps, e.g. after a bridge/restore). Those lines were exported the
@@ -403,8 +403,9 @@ def touch_lock() -> None:
 class SpanBuilder:
     """Collects OTLP JSON spans for one session."""
 
-    def __init__(self, session_id: str) -> None:
+    def __init__(self, session_id: str, seen: Optional["SeenLines"] = None) -> None:
         self.session_id = session_id
+        self.seen = seen
         self.spans: List[Dict[str, Any]] = []
         self.customer_id = os.environ.get("RESPAN_CUSTOMER_ID", "claude-code")
         self.metadata = customer_metadata()
@@ -429,6 +430,14 @@ class SpanBuilder:
         tool_calls: Optional[List[Dict[str, Any]]] = None,
         reasoning: str = "",
     ) -> None:
+        if self.seen is not None:
+            # Hard send-once: a span id already sent in this session is never sent again,
+            # whatever the transcript repeats (e.g. a fork sub-agent's transcript starts
+            # with a copy of its parent's messages, same message and tool ids).
+            sent_key = f"s{span_id}"
+            if sent_key in self.seen:
+                return
+            self.seen.add(sent_key)
         start = start if start is not None else end
         end = end if end is not None else start
         if start is not None and end is not None and end < start:
@@ -1118,7 +1127,7 @@ def process_file(
     while True:
         entry = files.get(key) or {"offset": 0, "parser": new_parser()}
         snapshot = json.dumps(session)  # restored if the send fails
-        builder = SpanBuilder(session_id)
+        builder = SpanBuilder(session_id, seen)
         processor = FileProcessor(
             session_id=session_id,
             session=session,

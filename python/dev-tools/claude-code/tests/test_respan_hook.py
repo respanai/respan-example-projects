@@ -711,3 +711,27 @@ def test_tool_results_between_lines_of_one_response_do_not_split_it(env):
     first = next(s for s in chats if "tool_calls" in json.dumps(s))
     calls = json.loads(attrs(first)["gen_ai.completion.0.tool_calls"])
     assert [c["function"]["name"] for c in calls] == ["Edit", "Bash"]
+
+
+def test_a_fork_subagent_copying_its_parents_messages_sends_nothing_twice(env):
+    """A fork sub-agent's transcript starts with a copy of its parent's conversation:
+    new line uuids, but the same message ids and tool_use ids."""
+    hook, collector, t = env
+    t.prompt("Fork it")
+    spawn = t.line("assistant", {"id": "msg_p", "role": "assistant", "model": "claude-opus-5-5",
+                                 "usage": {"input_tokens": 1, "output_tokens": 2},
+                                 "content": [{"type": "tool_use", "id": "toolu_fk", "name": "Agent", "input": {"prompt": "go"}}]},
+                   requestId="req_p")
+    fork = t.subagent("fk1", "toolu_fk")
+    t.result("toolu_fk", "Fork started", use_result={"agentId": "fk1", "status": "async_launched"})
+    t.reply("m2", "Forked")
+    # The fork's file: the parent's prompt and spawning response copied (new uuids), then its own work.
+    t.prompt("Fork it", path=fork, agent="fk1")
+    t.line("assistant", spawn["message"], path=fork, agent="fk1", requestId="req_p")
+    t.result("toolu_fk", "Fork started", path=fork, agent="fk1")
+    t.prompt("go", path=fork, agent="fk1")
+    t.reply("mf", "fork done", path=fork, agent="fk1")
+    fire(hook, t, "SubagentStop", agent_id="fk1")
+    fire(hook, t, "Stop")
+    assert_sent_once(collector)
+    assert any(attrs(s).get("gen_ai.completion.0.content") == "fork done" for s in collector.spans)
