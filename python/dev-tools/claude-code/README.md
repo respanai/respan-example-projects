@@ -8,7 +8,7 @@ captured in full, with every parent-child relationship kept.
 
 ```
 Session (thread claudecode_<session id>)
-├─ Trace: Turn 1: "Investigate the bug"          root span, links to nothing
+├─ Trace: Turn 1: "Investigate the bug"          root span (claude_code.turn = 1)
 │  ├─ claude.chat (claude-opus-...)               one span per model response: tokens, cache, reasoning, tool calls
 │  ├─ Tool: Read / Bash / Edit ...                input, output, duration, errors
 │  └─ Tool: Agent                                 the call that spawned a sub-agent
@@ -17,19 +17,20 @@ Session (thread claudecode_<session id>)
 │        ├─ Tool: Grep ...
 │        └─ Tool: Agent                           sub-agents of sub-agents nest the same way
 │           └─ Sub-agent: ...
-├─ Trace: Turn 2: ...                             links to Turn 1 (respan.link.type = previous_turn)
+├─ Trace: Turn 2: ...                             same session and thread id
 └─ ...
 ```
 
-- **One trace per turn**, so a 10-hour session never keeps one trace open. Every turn's
-  root links to the previous turn's root, and every span of the session carries the
-  same session and thread id (`claudecode_<session id>`).
+- **One trace per turn**, so a 10-hour session never keeps one trace open. Every span
+  of the session carries the same session and thread id (`claudecode_<session id>`):
+  the Threads view, or a `session_identifier` filter, shows the whole session.
 - **Sub-agents are nested** under the `Tool: Agent` call that spawned them, at any
-  depth. A background sub-agent that finishes during a later turn still appears in the
-  trace of the turn that started it. Each `Sub-agent` span also links to that call
-  (`spawned_by`) and carries `claude_code.agent_id`, `agent_type` and `spawn_depth`.
-- **Resumed sessions** (`--resume`, `--continue`) link their first turn to the last turn
-  of the session they resumed (`resumed_from`) and do not re-send the copied history.
+  depth, as ordinary child spans of the same trace. A background sub-agent that
+  finishes during a later turn still appears in the trace of the turn that started it.
+  Each `Sub-agent` span carries `claude_code.agent_id`, `claude_code.agent_type` and
+  `claude_code.spawn_depth`.
+- **Resumed sessions** (`--resume`, `--continue`) record the session they resumed in
+  `claude_code.resumed_from_session` and do not re-send the copied history.
 - **Sent while the session runs**: on every tool call, sub-agent finish and response,
   not only at the end.
 - **Nothing lost**: the hook reads each transcript from where it stopped (it never
