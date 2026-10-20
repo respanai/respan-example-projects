@@ -50,7 +50,7 @@ try:
 except ImportError:  # pragma: no cover - reported at runtime
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.1.0"
+HOOK_VERSION = "2.2.0"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
@@ -548,12 +548,20 @@ class FileProcessor:
             "input": truncate(text),
             "output": "",
         }
+        # Emitted now (end = start) so the turn's children are never orphans while it
+        # runs, and again with the same span id when it ends.
+        self.emit_turn(self.p["turn"])
 
     def close_turn(self) -> None:
         turn = self.p.get("turn")
         if not turn:
             return
         self.flush_message()
+        self.emit_turn(turn)
+        self.session["last_turn"] = {"trace": turn["trace"], "span": turn["span"], "ts": turn["start"]}
+        self.p["turn"] = None
+
+    def emit_turn(self, turn: Dict[str, Any]) -> None:
         preview = turn["input"].replace("\n", " ").strip()
         preview = (preview[:60] + "...") if len(preview) > 60 else (preview or f"turn {turn['n']}")
         metadata: Dict[str, Any] = {"claude_code.turn": turn["n"]}
@@ -571,8 +579,6 @@ class FileProcessor:
             output_text=truncate(turn["output"]),
             metadata=metadata,
         )
-        self.session["last_turn"] = {"trace": turn["trace"], "span": turn["span"], "ts": turn["start"]}
-        self.p["turn"] = None
 
     # -- sub-agent root ------------------------------------------------------ #
 
@@ -587,6 +593,9 @@ class FileProcessor:
             "output": "",
             "closed": False,
         }
+        # Emitted at first sight (end = start) so a long-running or background
+        # sub-agent's spans always have their parent; re-emitted when it finishes.
+        self.emit_agent(self.p["agent"])
 
     def close_agent(self) -> None:
         agent = self.p.get("agent")
@@ -595,6 +604,13 @@ class FileProcessor:
         self.flush_message()
         for tool_id in list(self.p["tools"]):
             self.finish_tool(tool_id, None, None, missing=True)
+        self.emit_agent(agent)
+        agent["closed"] = True
+        closed = self.session.setdefault("closed_agents", [])
+        if self.agent_id not in closed:
+            closed.append(self.agent_id)
+
+    def emit_agent(self, agent: Dict[str, Any]) -> None:
         meta = self.agent_meta
         name = meta.get("description") or meta.get("agentType") or "sub-agent"
         self.builder.add(
@@ -613,10 +629,6 @@ class FileProcessor:
                 "claude_code.spawn_depth": meta.get("spawnDepth"),
             },
         )
-        agent["closed"] = True
-        closed = self.session.setdefault("closed_agents", [])
-        if self.agent_id not in closed:
-            closed.append(self.agent_id)
 
     # -- assistant messages (one LLM span per API response) ------------------ #
 
@@ -726,6 +738,19 @@ class FileProcessor:
         if name in AGENT_TOOL_NAMES:
             # Sub-agents spawned by this call nest under this tool span, in this trace.
             self.session["spawns"][tool_id] = {"trace": trace, "span": span}
+            # A foreground sub-agent's result only arrives when it finishes: emit the
+            # call now so the sub-agent has its parent meanwhile (re-emitted at result).
+            self.builder.add(
+                trace_id=trace,
+                span_id=span,
+                parent_id=parent,
+                name=f"Tool: {name}",
+                log_type="tool",
+                start=ts,
+                end=ts,
+                input_text=self.p["tools"][tool_id]["input"],
+                metadata={"claude_code.agent_id": self.agent_id},
+            )
 
     def finish_tool(
         self,
@@ -1110,7 +1135,13 @@ def process_session(
             progressed_any = progressed_any or progressed
         if not progressed_any:
             break
-    session["close_requests"] = [a for a in session.get("close_requests", []) if a not in session.get("closed_agents", [])]
+    # SubagentStop also fires for agents that never get a transcript here: keep only
+    # requests for sub-agents this session knows and has not closed yet.
+    known = {Path(f).stem[len("agent-"):] for f in session.get("files", {}) if "/subagents/" in f}
+    known |= set(session.get("agent_tools", {}))
+    session["close_requests"] = [
+        a for a in session.get("close_requests", []) if a in known and a not in session.get("closed_agents", [])
+    ][-500:]
     session["updated"] = time.time()
     save_state(state)
     return total_read
@@ -1167,6 +1198,20 @@ def take_events() -> List[Dict[str, Any]]:
     return sorted(latest.values(), key=lambda e: float(e.get("at") or 0))
 
 
+def has_stale_open_agent(session: Dict[str, Any]) -> bool:
+    now = time.time()
+    for path, entry in session.get("files", {}).items():
+        agent = (entry.get("parser") or {}).get("agent")
+        if not agent or agent.get("closed"):
+            continue
+        try:
+            if now - os.path.getmtime(path) > SUBAGENT_STALE_CLOSE_SECONDS:
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def run_worker(api_key: str, base_url: str) -> int:
     """Drain queued hook events. Exactly one worker runs at a time; an event that
     arrives while it runs marks the queue dirty and the worker runs another pass."""
@@ -1188,6 +1233,15 @@ def run_worker(api_key: str, base_url: str) -> int:
                 if event.get("session_id") and event.get("transcript_path"):
                     by_session[event["session_id"]] = Path(event["transcript_path"])
             failed = False
+            # Sessions with an open sub-agent whose file went quiet get a pass too, so a
+            # missed SubagentStop (crash, background agent outliving its parent's last
+            # event) still closes that sub-agent on a later hook run of any session.
+            for other_id, other in state.get("sessions", {}).items():
+                if other_id in by_session:
+                    continue
+                main = [f for f in other.get("files", {}) if "/subagents/" not in f]
+                if main and has_stale_open_agent(other):
+                    by_session[other_id] = Path(main[0])
             for session_id, transcript in by_session.items():
                 if not transcript.exists():
                     continue

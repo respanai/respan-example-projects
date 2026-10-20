@@ -6,8 +6,10 @@ Run: pip install pytest requests && pytest python/dev-tools/claude-code/tests
 import importlib
 import json
 import sys
+import os
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -135,13 +137,23 @@ class Collector:
         return FakeResponse(200)
 
     @property
-    def spans(self):
+    def all_spans(self):
+        """Every span as sent (open containers are sent twice: at first sight and at close)."""
         out = []
         for payload in self.payloads:
             for resource in payload["resourceSpans"]:
                 for scope in resource["scopeSpans"]:
                     out.extend(scope["spans"])
         return out
+
+    @property
+    def spans(self):
+        """One span per span id, the last one sent (what span-id dedupe keeps)."""
+        latest = {}
+        for span in self.all_spans:
+            latest.pop(span["spanId"], None)
+            latest[span["spanId"]] = span
+        return list(latest.values())
 
 
 @pytest.fixture
@@ -300,7 +312,9 @@ def test_subagents_nest_under_their_agent_tool_span_at_any_depth(env):
     assert {s["traceId"] for s in spans} == {turn1["traceId"]}
 
     subagents = {attrs(s)["respan.metadata.claude_code.agent_id"]: s for s in spans if s["name"].startswith("Sub-agent")}
-    assert set(subagents) == {"aaa", "bbb", "ccc"}  # ddd still running
+    assert set(subagents) == {"aaa", "bbb", "ccc", "ddd"}
+    # ddd is still running: only its first-sight root (end = start) has been sent.
+    assert subagents["ddd"]["endTimeUnixNano"] == subagents["ddd"]["startTimeUnixNano"]
     tool_spans = {
         tool_id: index[hook.span_id_for(SESSION, f"tool:{tool_id}")]
         for tool_id in ("toolu_A", "toolu_B", "toolu_C", "toolu_c_bash")
@@ -368,7 +382,10 @@ def test_long_session_is_read_incrementally_never_from_the_start(env):
     assert total_read == size  # every byte read exactly once across 20 runs
     turns = [s for s in collector.spans if s["name"].startswith("Turn")]
     assert len(turns) == 2000
-    assert len({s["spanId"] for s in collector.spans}) == len(collector.spans)  # no re-sends
+    # Only container spans (turn roots) are sent twice; nothing else is re-sent.
+    resent = Counter(s["spanId"] for s in collector.all_spans)
+    assert {s["name"][:4] for s in collector.all_spans if resent[s["spanId"]] > 1} == {"Turn"}
+    assert all(n <= 2 for n in resent.values())
     assert {attrs(s)["respan.threads.thread_identifier"] for s in turns} == {f"claudecode_{SESSION}"}
     assert sorted(int(attrs(s)["respan.metadata.claude_code.turn"]) for s in turns) == list(range(1, 2001))
 
@@ -458,12 +475,11 @@ def test_stop_does_not_close_a_turn_a_newer_prompt_opened(env):
     t.prompt("Two")
     t.reply("m2", "partial")
     fire(hook, t, "Stop", at=stop_time)
-    roots = [s["name"][:6] for s in collector.spans if s["name"].startswith("Turn")]
-    assert roots == ["Turn 1"]
+    closed = lambda: [s["name"][:6] for s in collector.spans if s["name"].startswith("Turn") and s["endTimeUnixNano"] != s["startTimeUnixNano"]]
+    assert closed() == ["Turn 1"]  # Turn 2 is only at its first sight
     t.reply("m3", "rest of two")
     fire(hook, t, "Stop")
-    roots = [s["name"][:6] for s in collector.spans if s["name"].startswith("Turn")]
-    assert roots == ["Turn 1", "Turn 2"]
+    assert sorted(closed()) == ["Turn 1", "Turn 2"]
 
 
 def test_hook_entrypoint_returns_fast_and_queues_the_event(env, monkeypatch):
@@ -483,8 +499,11 @@ def test_finished_subagents_close_without_subagentstop(env):
     hook, collector, t = env
     one_turn_with_subagents(t)
     fire(hook, t, "PostToolUse")  # no SubagentStop, no Stop
-    roots = {attrs(s)["respan.metadata.claude_code.agent_id"] for s in collector.spans if s["name"].startswith("Sub-agent")}
-    assert roots == {"aaa", "bbb", "ccc"}  # foreground agents whose results came back; ddd still running
+    sends = Counter(attrs(s)["respan.metadata.claude_code.agent_id"] for s in collector.all_spans if s["name"].startswith("Sub-agent"))
+    closed = {agent for agent, n in sends.items() if n == 2}
+    assert closed == {"aaa", "bbb", "ccc"}  # foreground agents whose results came back
+    assert sends["ddd"] == 1  # still running: first-sight root only
+    roots = closed
     index = by_id(collector.spans)
     for span in collector.spans:
         if span.get("parentSpanId"):
@@ -542,3 +561,74 @@ def test_one_chat_span_per_api_response_from_the_real_line_shape(env):
     second = next(s for s in chats if s is not first)
     assert abs(int(second["startTimeUnixNano"]) / 1e9 - next_request_ts) < 0.01
     assert all("REQUEST BLOB" not in json.dumps(s) for s in collector.spans)
+
+
+def assert_no_orphans(collector):
+    """Every parent referenced so far has itself been sent (the tree is whole at every moment)."""
+    sent = {s["spanId"] for s in collector.all_spans}
+    orphans = [s["name"] for s in collector.all_spans if s.get("parentSpanId") and s["parentSpanId"] not in sent]
+    assert not orphans, orphans
+
+
+def test_running_subagents_and_turns_never_leave_orphans(env):
+    """Mid-turn: a foreground sub-agent still working (its Agent call has no result yet)
+    and a background sub-agent still working. Every exported span has its parent."""
+    hook, collector, t = env
+    t.prompt("Big task")
+    t.reply("m1", "Starting", tools=[
+        ("toolu_F", "Agent", {"description": "F", "prompt": "fg"}),
+        ("toolu_G", "Agent", {"description": "G", "prompt": "bg", "run_in_background": True}),
+    ])
+    f = t.subagent("fff", "toolu_F")
+    g = t.subagent("ggg", "toolu_G", background=True)
+    t.result("toolu_G", "launched", use_result={"agentId": "ggg", "status": "async_launched"})
+    t.prompt("fg", path=f, agent="fff")
+    t.reply("mf1", tools=[("toolu_f1", "Bash", {"command": "make"})], path=f, agent="fff")
+    t.result("toolu_f1", "ok", path=f, agent="fff")
+    t.prompt("bg", path=g, agent="ggg")
+    t.reply("mg1", tools=[("toolu_g1", "Grep", {"pattern": "x"})], path=g, agent="ggg")
+    t.result("toolu_g1", "hits", path=g, agent="ggg")
+    fire(hook, t, "PostToolUse", agent_id="fff")  # nothing has finished yet
+    assert_no_orphans(collector)
+    names = {s["name"].split(":")[0] for s in collector.spans}
+    assert {"Turn 1", "Sub-agent", "Tool"} <= names
+    # Both sub-agents finish; the final roots replace the first-sight ones.
+    t.reply("mf2", "F done", path=f, agent="fff")
+    t.result("toolu_F", "F result", use_result={"agentId": "fff", "status": "completed"})
+    t.reply("mg2", "G done", path=g, agent="ggg")
+    t.reply("m2", "All done")
+    fire(hook, t, "SubagentStop", agent_id="ggg")
+    fire(hook, t, "Stop")
+    assert_no_orphans(collector)
+    roots = {attrs(s)["respan.metadata.claude_code.agent_id"]: s for s in collector.spans if s["name"].startswith("Sub-agent")}
+    for agent_id in ("fff", "ggg"):
+        assert int(roots[agent_id]["endTimeUnixNano"]) > int(roots[agent_id]["startTimeUnixNano"])
+    turn = next(s for s in collector.spans if s["name"].startswith("Turn 1"))
+    assert int(turn["endTimeUnixNano"]) > int(turn["startTimeUnixNano"])
+    agent_tool = by_id(collector.spans)[hook.span_id_for(SESSION, "tool:toolu_F")]
+    assert attrs(agent_tool)["traceloop.entity.output"] == "F result"
+
+
+def test_missed_subagentstop_closes_on_a_later_run_of_another_session(env, tmp_path):
+    """A background sub-agent outlives its session's last hook event and never gets a
+    SubagentStop: once its file is quiet, any later hook run (any session) closes it."""
+    hook, collector, t = env
+    t.prompt("Kick off")
+    t.reply("m1", tools=[("toolu_Z", "Agent", {"description": "Z", "prompt": "z", "run_in_background": True})])
+    z = t.subagent("zzz", "toolu_Z", background=True)
+    t.result("toolu_Z", "launched", use_result={"agentId": "zzz", "status": "async_launched"})
+    t.reply("m2", "Launched")
+    t.prompt("z", path=z, agent="zzz")
+    t.reply("mz1", "Z finished its work", path=z, agent="zzz")
+    fire(hook, t, "Stop")
+    root_sends = lambda: [s for s in collector.all_spans if s["name"].startswith("Sub-agent")]
+    assert len(root_sends()) == 1  # first sight only: not closed yet
+    old = time.time() - 3600
+    os.utime(z, (old, old))
+    other = Transcript(tmp_path / "other", session="77777777-2222-3333-4444-555555555555")
+    other.prompt("Unrelated session")
+    other.reply("o1", "ok")
+    fire(hook, other, "Stop")
+    assert len(root_sends()) == 2  # closed on the other session's run
+    final = root_sends()[-1]
+    assert int(final["endTimeUnixNano"]) > int(final["startTimeUnixNano"])
