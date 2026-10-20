@@ -33,8 +33,9 @@ Session (thread claudecode_<session id>)
   `claude_code.resumed_from_session` and do not re-send the copied history.
 - **Sent while the session runs**: on every tool call, sub-agent finish and response,
   not only at the end. Every span is sent once: a turn's root and a sub-agent's root
-  are sent when they finish, so until then their spans show under a "running"
-  placeholder in the trace view. A sub-agent that never reports SubagentStop is closed
+  are sent when they finish, so while a turn or sub-agent is still running its spans
+  appear at the top level of the trace and nest under their parent once it closes and
+  is sent. A sub-agent that never reports SubagentStop is closed
   once its transcript has been quiet for 10 minutes; one that is continued after it
   finished (SendMessage) gets a new `Sub-agent (continued N)` span.
 - **Nothing lost**: the hook reads each transcript from where it stopped (it never
