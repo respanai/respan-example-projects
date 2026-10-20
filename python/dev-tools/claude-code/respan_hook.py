@@ -55,7 +55,7 @@ try:  # optional: used when present (it carries its own CA bundle)
 except ImportError:
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.3.0"
+HOOK_VERSION = "2.3.1"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
@@ -289,6 +289,54 @@ def prune_state(state: Dict[str, Any], now: float) -> None:
     for session_id in list(sessions):
         if now - float(sessions[session_id].get("updated", now)) > STATE_RETENTION_SECONDS:
             del sessions[session_id]
+            with contextlib.suppress(OSError):
+                SeenLines.path_for(session_id).unlink()
+
+
+class SeenLines:
+    """Transcript line uuids already exported, per session.
+
+    Claude Code sometimes re-appends a session's whole history to its transcript (same
+    uuids and timestamps, e.g. after a bridge/restore). Those lines were exported the
+    first time; skipping them keeps every span sent once and turn numbers right. Stored
+    as 48-bit hashes in an append-only file next to the state; new hashes are written
+    only after Respan accepted the spans of the lines they belong to.
+    """
+
+    def __init__(self, session_id: str) -> None:
+        self.path = SeenLines.path_for(session_id)
+        self.seen = set()
+        with contextlib.suppress(OSError):
+            self.seen = set(self.path.read_text(encoding="ascii").split())
+        self.pending: List[str] = []
+
+    @staticmethod
+    def path_for(session_id: str) -> Path:
+        return STATE_DIR / f"respan_seen_{_sha(session_id)[:16]}.txt"
+
+    @staticmethod
+    def key(uuid: str) -> str:
+        return _sha(f"cc:line:{uuid}")[:12]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.seen
+
+    def add(self, key: str) -> None:
+        self.seen.add(key)
+        self.pending.append(key)
+
+    def commit(self) -> None:
+        if not self.pending:
+            return
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "a", encoding="ascii") as f:
+            f.write("\n".join(self.pending) + "\n")
+        self.pending = []
+
+    def rollback(self) -> None:
+        for key in self.pending:
+            self.seen.discard(key)
+        self.pending = []
 
 
 def new_session_state() -> Dict[str, Any]:
@@ -513,7 +561,9 @@ class FileProcessor:
         parser: Dict[str, Any],
         agent_id: Optional[str] = None,
         agent_meta: Optional[Dict[str, Any]] = None,
+        seen: Optional[SeenLines] = None,
     ) -> None:
+        self.seen = seen
         self.session_id = session_id
         self.session = session
         self.builder = builder
@@ -814,6 +864,16 @@ class FileProcessor:
             # api-request-blob, attachment, mode, ... are not conversation lines and
             # their timestamps are out of order with it: ignore them entirely.
             return True
+        line_key = SeenLines.key(str(line["uuid"])) if self.seen is not None and line.get("uuid") else None
+        if line_key is not None and line_key in self.seen:
+            return True  # a re-appended copy of a line already exported
+        if not self.feed_message(line, ts, kind):
+            return False
+        if line_key is not None:
+            self.seen.add(line_key)
+        return True
+
+    def feed_message(self, line: Dict[str, Any], ts: Optional[float], kind: Any) -> bool:
         if self.kind == "main":
             if line.get("isSidechain"):
                 # Old Claude Code wrote sub-agent lines into the main file; they are not
@@ -1046,6 +1106,7 @@ def process_file(
     agent_meta: Optional[Dict[str, Any]] = None,
     close: bool = False,
     close_at: Optional[float] = None,
+    seen: Optional[SeenLines] = None,
 ) -> Tuple[bool, int]:
     """Export the new lines of one file, chunk by chunk. Returns (progress made, bytes read)."""
     files = session.setdefault("files", {})
@@ -1064,6 +1125,7 @@ def process_file(
             parser=entry["parser"],
             agent_id=agent_id,
             agent_meta=agent_meta,
+            seen=seen,
         )
         lines, read, size = read_new_lines(path, int(entry["offset"]), MAX_CHUNK_BYTES)
         total_read += read
@@ -1092,12 +1154,16 @@ def process_file(
             send_spans(builder.spans, api_key, base_url)
         except SendError as exc:
             log("ERROR", f"session {session_id}: send failed, will retry: {exc}")
+            if seen is not None:
+                seen.rollback()
             restored = json.loads(snapshot)
             session.clear()
             session.update(restored)
             raise
         session["updated"] = time.time()
         save_state(state)
+        if seen is not None:
+            seen.commit()
         touch_lock()
         progressed = True
         if at_end or blocked or not lines:
@@ -1126,9 +1192,10 @@ def process_session(
                 requests_list.append(event["agent_id"])
 
     total_read = 0
+    seen = SeenLines(session_id)
     _, read = process_file(
         session_id=session_id, session=session, state=state, path=transcript, kind="main",
-        api_key=api_key, base_url=base_url, close=turn_done,
+        api_key=api_key, base_url=base_url, close=turn_done, seen=seen,
         close_at=max(stop_times) if stop_times else None,
     )
     total_read += read
@@ -1150,6 +1217,7 @@ def process_session(
             progressed, read = process_file(
                 session_id=session_id, session=session, state=state, path=path, kind="agent",
                 api_key=api_key, base_url=base_url, agent_id=agent_id, agent_meta=meta, close=close,
+                seen=seen,
             )
             total_read += read
             progressed_any = progressed_any or progressed

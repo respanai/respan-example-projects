@@ -397,8 +397,14 @@ def test_send_failure_keeps_the_cursor_and_resends_identical_ids(env):
     names = sorted(s["name"].split(":")[0].split(" (")[0] for s in collector.spans)
     assert names == ["Tool", "Turn 1", "claude.chat", "claude.chat"]
     first_ids = {s["spanId"] for s in collector.spans}
-    # A full replay from scratch produces the same ids (idempotent re-export).
+    # Deleting only the state file does not re-send: the seen-lines file remembers.
     hook.STATE_FILE.unlink()
+    collector.payloads.clear()
+    fire(hook, t, "Stop")
+    assert collector.spans == []
+    # A full reset (state + seen lines) re-exports with the same ids.
+    hook.STATE_FILE.unlink()
+    hook.SeenLines.path_for(SESSION).unlink()
     collector.payloads.clear()
     fire(hook, t, "Stop")
     assert {s["spanId"] for s in collector.spans} == first_ids
@@ -653,3 +659,29 @@ def test_missed_subagentstop_closes_on_a_later_run_of_another_session(env, tmp_p
     assert_sent_once(collector)
     final = root_sends()[-1]
     assert int(final["endTimeUnixNano"]) > int(final["startTimeUnixNano"])
+
+
+def test_history_reappended_to_the_transcript_is_not_sent_again(env):
+    """Claude Code can re-append a session's whole history (same uuids and timestamps)
+    to its transcript, e.g. after a bridge/restore. Nothing is sent twice and the new
+    turn after it is turn 3, not turn 5."""
+    hook, collector, t = env
+    t.prompt("One")
+    t.reply("m1", "1", tools=[("toolu_1", "Bash", {"command": "ls"})])
+    t.result("toolu_1", "x")
+    t.reply("m2", "done 1")
+    t.prompt("Two")
+    t.reply("m3", "2")
+    fire(hook, t, "Stop")
+    history = t.path.read_text()
+    with open(t.path, "a") as f:
+        f.write(json.dumps({"type": "bridge-session", "sessionId": SESSION}) + "\n")
+        f.write(history)  # the same lines again
+    t.prompt("Three")
+    t.reply("m4", "3")
+    fire(hook, t, "Stop")
+    assert_sent_once(collector)
+    turns = sorted(s["name"].split(":")[0] for s in collector.spans if s["name"].startswith("Turn"))
+    assert turns == ["Turn 1", "Turn 2", "Turn 3"]
+    three = next(s for s in collector.spans if s["name"].startswith("Turn 3"))
+    assert three["name"] == "Turn 3: Three"
