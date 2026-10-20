@@ -5,18 +5,16 @@ Respan hook for Claude Code.
 Sends Claude Code sessions to Respan as traces, including every sub-agent, as the
 session runs. Long sessions (hours, many sub-agents) are captured in full:
 
-- One trace per user turn of the main session. Each turn's root span links to the
-  previous turn's root (``respan.link.type = previous_turn``), so a 10-hour session is
-  a chain of traces grouped by one session/thread id.
+- One trace per user turn of the main session, all grouped by one session/thread id
+  (``claudecode_<session id>``), so a 10-hour session never keeps one trace open.
 - Sub-agents (the Agent / Task tool) are nested in the trace of the turn that spawned
   them: ``claude_code.subagent`` is a child of the Agent tool span, and its model calls
   and tool calls are its children. Sub-agents spawned by sub-agents nest the same way,
   at any depth. Background sub-agents that finish after the turn still land there.
 - Spans are exported incrementally (on PostToolUse, SubagentStop and Stop), from a
   byte offset per transcript file: a file is never re-read from the start.
-- Span and trace ids are derived from the transcript (sha256), so re-sending the same
-  lines after a failure produces the same ids. A file's offset only moves after
-  Respan accepted the spans.
+- Span and trace ids are derived from the transcript (sha256). A file's offset only
+  moves after Respan accepted the spans.
 
 The hook itself returns immediately; the work runs in a detached worker.
 
@@ -52,7 +50,7 @@ try:
 except ImportError:  # pragma: no cover - reported at runtime
     requests = None  # type: ignore[assignment]
 
-HOOK_VERSION = "2.0.2"
+HOOK_VERSION = "2.1.0"
 
 STATE_DIR = Path(os.environ.get("CC_RESPAN_STATE_DIR", str(Path.home() / ".claude" / "state")))
 LOG_FILE = STATE_DIR / "respan_hook.log"
@@ -102,12 +100,6 @@ ATTR_SESSION = "respan.sessions.session_identifier"
 ATTR_CUSTOMER = "respan.customer_params.customer_identifier"
 ATTR_LOG_TYPE = "respan.entity.log_type"
 ATTR_METADATA_PREFIX = "respan.metadata."
-ATTR_LINK_TIMESTAMP = "respan.link.timestamp"
-# respan_sdk.constants.span_attributes.RESPAN_LINK_TYPE and its values.
-ATTR_LINK_TYPE = "respan.link.type"
-LINK_PREVIOUS_TURN = "previous_turn"
-LINK_SPAWNED_BY = "spawned_by"
-LINK_RESUMED_FROM = "resumed_from"
 
 OTEL_STATUS_OK = 1
 OTEL_STATUS_ERROR = 2
@@ -178,10 +170,6 @@ def to_nanos(seconds: Optional[float]) -> str:
     if seconds is None:
         seconds = time.time()
     return str(int(round(seconds * 1_000_000)) * 1000)
-
-
-def iso(seconds: float) -> str:
-    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def truncate(text: str, limit: int = MAX_CHARS) -> str:
@@ -383,7 +371,6 @@ class SpanBuilder:
         model: Optional[str] = None,
         usage: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
         is_error: bool = False,
         error_message: str = "",
         tool_calls: Optional[List[Dict[str, Any]]] = None,
@@ -433,7 +420,6 @@ class SpanBuilder:
                 )
         merged = dict(self.metadata)
         merged.update(metadata or {})
-        merged["claude_code.hook_version"] = HOOK_VERSION
         for key, value in merged.items():
             if value is None:
                 continue
@@ -452,20 +438,6 @@ class SpanBuilder:
         }
         if parent_id:
             span["parentSpanId"] = parent_id
-        if links:
-            span["links"] = [
-                {
-                    "traceId": link["trace"],
-                    "spanId": link["span"],
-                    "attributes": otlp_attributes(
-                        {
-                            ATTR_LINK_TYPE: link["type"],
-                            **({ATTR_LINK_TIMESTAMP: iso(link["ts"])} if link.get("ts") else {}),
-                        }
-                    ),
-                }
-                for link in links
-            ]
         self.spans.append(span)
 
 
@@ -536,9 +508,7 @@ class FileProcessor:
         parser: Dict[str, Any],
         agent_id: Optional[str] = None,
         agent_meta: Optional[Dict[str, Any]] = None,
-        all_sessions: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self.all_sessions = all_sessions or {}
         self.session_id = session_id
         self.session = session
         self.builder = builder
@@ -586,15 +556,7 @@ class FileProcessor:
         self.flush_message()
         preview = turn["input"].replace("\n", " ").strip()
         preview = (preview[:60] + "...") if len(preview) > 60 else (preview or f"turn {turn['n']}")
-        links = []
-        last = self.session.get("last_turn")
-        if last:
-            links.append({"trace": last["trace"], "span": last["span"], "type": LINK_PREVIOUS_TURN, "ts": last.get("ts")})
-        elif self.session.get("resumed_from"):
-            resumed = self.session["resumed_from"]
-            if resumed.get("trace"):
-                links.append({"trace": resumed["trace"], "span": resumed["span"], "type": LINK_RESUMED_FROM, "ts": resumed.get("ts")})
-        metadata = {"claude_code.turn": turn["n"], "claude_code.session_id": self.session_id}
+        metadata: Dict[str, Any] = {"claude_code.turn": turn["n"]}
         if self.session.get("resumed_from"):
             metadata["claude_code.resumed_from_session"] = self.session["resumed_from"].get("session_id")
         self.builder.add(
@@ -608,7 +570,6 @@ class FileProcessor:
             input_text=turn["input"],
             output_text=truncate(turn["output"]),
             metadata=metadata,
-            links=links,
         )
         self.session["last_turn"] = {"trace": turn["trace"], "span": turn["span"], "ts": turn["start"]}
         self.p["turn"] = None
@@ -620,7 +581,6 @@ class FileProcessor:
             "trace": spawn["trace"],
             "span": span_id_for(self.session_id, f"agent:{self.agent_id}"),
             "parent": spawn["span"],
-            "parent_ts": spawn.get("ts"),
             "start": ts,
             "end": ts,
             "input": truncate(text_of(content_of(line))),
@@ -651,10 +611,7 @@ class FileProcessor:
                 "claude_code.agent_id": self.agent_id,
                 "claude_code.agent_type": meta.get("agentType"),
                 "claude_code.spawn_depth": meta.get("spawnDepth"),
-                "claude_code.session_id": self.session_id,
-                "claude_code.background": meta.get("requestShape") == "background" or None,
             },
-            links=[{"trace": agent["trace"], "span": agent["parent"], "type": LINK_SPAWNED_BY, "ts": agent.get("parent_ts")}],
         )
         agent["closed"] = True
         closed = self.session.setdefault("closed_agents", [])
@@ -688,11 +645,7 @@ class FileProcessor:
             usage=msg.get("usage"),
             tool_calls=tool_calls,
             reasoning=truncate("\n\n".join(msg.get("thinking", []))),
-            metadata={
-                "claude_code.request_id": msg.get("request_id"),
-                "claude_code.stop_reason": msg.get("stop_reason"),
-                "claude_code.agent_id": self.agent_id,
-            },
+            metadata={"claude_code.agent_id": self.agent_id},
         )
 
     def on_assistant(self, line: Dict[str, Any], ts: Optional[float]) -> None:
@@ -731,8 +684,6 @@ class FileProcessor:
             self.p["message"] = current
         current["end"] = ts or current["end"]
         current["model"] = message.get("model") or current.get("model")
-        current["request_id"] = line.get("requestId") or current.get("request_id")
-        current["stop_reason"] = message.get("stop_reason") or current.get("stop_reason")
         if isinstance(message.get("usage"), dict):
             current["usage"] = message["usage"]
         content = message.get("content")
@@ -774,7 +725,7 @@ class FileProcessor:
         }
         if name in AGENT_TOOL_NAMES:
             # Sub-agents spawned by this call nest under this tool span, in this trace.
-            self.session["spawns"][tool_id] = {"trace": trace, "span": span, "ts": ts}
+            self.session["spawns"][tool_id] = {"trace": trace, "span": span}
 
     def finish_tool(
         self,
@@ -789,15 +740,13 @@ class FileProcessor:
         if not tool:
             return
         use_result = (line or {}).get("toolUseResult") if line else None
-        metadata: Dict[str, Any] = {"claude_code.tool_use_id": tool_id, "claude_code.agent_id": self.agent_id}
+        metadata: Dict[str, Any] = {"claude_code.agent_id": self.agent_id}
         if isinstance(use_result, dict):
             for src, dst in (("durationMs", "duration_ms"), ("numFiles", "num_files"), ("truncated", "truncated")):
                 if src in use_result:
                     metadata[dst] = use_result[src]
             spawned = use_result.get("agentId")
             if spawned:
-                metadata["claude_code.spawned_agent_id"] = spawned
-                metadata["claude_code.spawned_agent_status"] = use_result.get("status")
                 self.session["agent_tools"][str(spawned)] = tool_id
                 if use_result.get("status") not in (None, "async_launched", "running"):
                     # A foreground sub-agent returned: it is finished.
@@ -856,11 +805,7 @@ class FileProcessor:
             if line_session and line_session != self.session_id:
                 # History copied from the session this one resumed: already traced there.
                 if not self.session.get("resumed_from"):
-                    resumed = {"session_id": line_session}
-                    previous = (self.all_sessions.get(line_session) or {}).get("last_turn")
-                    if previous:
-                        resumed.update(previous)
-                    self.session["resumed_from"] = resumed
+                    self.session["resumed_from"] = {"session_id": line_session}
                 return True
             if is_prompt_line(line):
                 self.close_turn()
@@ -1073,7 +1018,6 @@ def process_file(
             parser=entry["parser"],
             agent_id=agent_id,
             agent_meta=agent_meta,
-            all_sessions=state.get("sessions"),
         )
         lines, read, size = read_new_lines(path, int(entry["offset"]), MAX_CHUNK_BYTES)
         total_read += read

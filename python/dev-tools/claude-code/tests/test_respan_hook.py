@@ -198,8 +198,21 @@ def chain_to_root(span, index):
     return chain
 
 
-def link_types(span):
-    return [attrs({"attributes": link["attributes"]})["respan.link.type"] for link in span.get("links", [])]
+ALLOWED_CLAUDE_CODE_METADATA = {
+    "respan.metadata.claude_code.agent_id",
+    "respan.metadata.claude_code.agent_type",
+    "respan.metadata.claude_code.spawn_depth",
+    "respan.metadata.claude_code.turn",
+    "respan.metadata.claude_code.resumed_from_session",
+}
+
+
+def assert_plain_spans(spans):
+    """No span links; only the agreed claude_code.* metadata."""
+    for span in spans:
+        assert "links" not in span
+        extra = {k for k in attrs(span) if k.startswith("respan.metadata.claude_code.")} - ALLOWED_CLAUDE_CODE_METADATA
+        assert not extra, extra
 
 
 def one_turn_with_subagents(t: Transcript):
@@ -253,6 +266,8 @@ def test_plain_turn_exports_root_llm_tool_and_ids(env):
     assert names == ["Tool", "Turn 1", "claude.chat", "claude.chat"]
     first_llm = next(s for s in spans if attrs(s).get("gen_ai.completion.0.reasoning_content") == "hmm")
     assert attrs(first_llm)["gen_ai.completion.0.content"] == "Reading"
+    assert attrs(root)["respan.metadata.claude_code.turn"] == "1"
+    assert_plain_spans(spans)
     root = next(s for s in spans if s["name"].startswith("Turn 1"))
     assert "parentSpanId" not in root
     assert len({s["traceId"] for s in spans}) == 1
@@ -286,7 +301,10 @@ def test_subagents_nest_under_their_agent_tool_span_at_any_depth(env):
 
     subagents = {attrs(s)["respan.metadata.claude_code.agent_id"]: s for s in spans if s["name"].startswith("Sub-agent")}
     assert set(subagents) == {"aaa", "bbb", "ccc"}  # ddd still running
-    tool_spans = {attrs(s)["respan.metadata.claude_code.tool_use_id"]: s for s in spans if s["name"].startswith("Tool:")}
+    tool_spans = {
+        tool_id: index[hook.span_id_for(SESSION, f"tool:{tool_id}")]
+        for tool_id in ("toolu_A", "toolu_B", "toolu_C", "toolu_c_bash")
+    }
     assert subagents["aaa"]["parentSpanId"] == tool_spans["toolu_A"]["spanId"]
     assert subagents["bbb"]["parentSpanId"] == tool_spans["toolu_B"]["spanId"]
     assert subagents["ccc"]["parentSpanId"] == tool_spans["toolu_C"]["spanId"]
@@ -295,9 +313,9 @@ def test_subagents_nest_under_their_agent_tool_span_at_any_depth(env):
     deepest = tool_spans["toolu_c_bash"]
     chain = chain_to_root(deepest, index)
     assert [s["name"].split(":")[0] for s in chain] == ["Tool", "Sub-agent", "Tool", "Sub-agent", "Tool", "Turn 1"]
-    for agent_id, span in subagents.items():
-        assert link_types(span) == ["spawned_by"]
-        assert span["links"][0]["spanId"] == span["parentSpanId"]
+    assert attrs(subagents["ccc"])["respan.metadata.claude_code.spawn_depth"] == "2"
+    assert attrs(subagents["aaa"])["respan.metadata.claude_code.agent_type"] == "general-purpose"
+    assert_plain_spans(spans)
     # Sub-agent model calls are their own LLM spans with their own usage.
     c_llm = [s for s in spans if s["name"].startswith("claude.chat") and s["parentSpanId"] == subagents["ccc"]["spanId"]]
     assert len(c_llm) == 2 and all(attrs(s)["gen_ai.usage.completion_tokens"] == "5" for s in c_llm)
@@ -319,10 +337,10 @@ def test_background_subagent_finishing_in_a_later_turn_stays_in_the_spawning_tra
     assert [s["name"][:6] for s in turns] == ["Turn 1", "Turn 2"]
     d_root = next(s for s in spans if s["name"].startswith("Sub-agent") and attrs(s)["respan.metadata.claude_code.agent_id"] == "ddd")
     assert d_root["traceId"] == turns[0]["traceId"] != turns[1]["traceId"]
-    assert attrs(d_root)["respan.metadata.claude_code.background"] is True
-    assert link_types(turns[1]) == ["previous_turn"]
-    assert turns[1]["links"][0]["traceId"] == turns[0]["traceId"]
-    assert turns[1]["links"][0]["spanId"] == turns[0]["spanId"]
+    assert attrs(turns[1])["respan.metadata.claude_code.turn"] == "2"
+    sessions = {attrs(s)["respan.sessions.session_identifier"] for s in spans}
+    assert sessions == {f"claudecode_{SESSION}"}  # both turns group into one session
+    assert_plain_spans(spans)
 
 
 def test_sidechain_lines_in_the_main_file_are_not_turns(env):
@@ -351,9 +369,8 @@ def test_long_session_is_read_incrementally_never_from_the_start(env):
     turns = [s for s in collector.spans if s["name"].startswith("Turn")]
     assert len(turns) == 2000
     assert len({s["spanId"] for s in collector.spans}) == len(collector.spans)  # no re-sends
-    # Every turn after the first links to its predecessor.
-    linked = sum(1 for s in turns if link_types(s) == ["previous_turn"])
-    assert linked == 1999
+    assert {attrs(s)["respan.threads.thread_identifier"] for s in turns} == {f"claudecode_{SESSION}"}
+    assert sorted(int(attrs(s)["respan.metadata.claude_code.turn"]) for s in turns) == list(range(1, 2001))
 
 
 def test_send_failure_keeps_the_cursor_and_resends_identical_ids(env):
@@ -400,7 +417,7 @@ def test_concurrent_invocations_never_double_export(env):
     assert names == ["Tool", "Turn 1", "claude.chat", "claude.chat"]
 
 
-def test_resumed_session_links_to_the_session_it_resumed_and_skips_copied_history(env, tmp_path):
+def test_resumed_session_records_the_session_it_resumed_and_skips_copied_history(env, tmp_path):
     hook, collector, t = env
     t.prompt("First session")
     t.reply("m1", "Answer")
@@ -419,9 +436,9 @@ def test_resumed_session_links_to_the_session_it_resumed_and_skips_copied_histor
     spans = collector.spans
     turns = [s for s in spans if s["name"].startswith("Turn")]
     assert len(turns) == 1 and turns[0]["name"].startswith("Turn 1: Continue please")
-    assert link_types(turns[0]) == ["resumed_from"]
-    assert turns[0]["links"][0]["spanId"] == first_root["spanId"]
-    assert turns[0]["links"][0]["traceId"] == first_root["traceId"]
+    assert attrs(turns[0])["respan.metadata.claude_code.resumed_from_session"] == SESSION
+    assert turns[0]["traceId"] != first_root["traceId"]
+    assert_plain_spans(spans)
 
 
 def test_a_turn_ending_on_a_tool_call_is_still_exported(env):
