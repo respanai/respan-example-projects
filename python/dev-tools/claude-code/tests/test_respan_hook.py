@@ -250,7 +250,9 @@ def test_plain_turn_exports_root_llm_tool_and_ids(env):
 
     spans = collector.spans
     names = sorted(s["name"].split(":")[0].split(" (")[0] for s in spans)
-    assert names == ["Thinking", "Tool", "Turn 1", "claude.chat", "claude.chat"]
+    assert names == ["Tool", "Turn 1", "claude.chat", "claude.chat"]
+    first_llm = next(s for s in spans if attrs(s).get("gen_ai.completion.0.reasoning_content") == "hmm")
+    assert attrs(first_llm)["gen_ai.completion.0.content"] == "Reading"
     root = next(s for s in spans if s["name"].startswith("Turn 1"))
     assert "parentSpanId" not in root
     assert len({s["traceId"] for s in spans}) == 1
@@ -473,3 +475,53 @@ def test_finished_subagents_close_without_subagentstop(env):
             # every exported sub-agent child has its sub-agent root exported too
             if attrs(span).get("respan.metadata.claude_code.agent_id") in roots:
                 assert parent is not None
+
+
+def test_one_chat_span_per_api_response_from_the_real_line_shape(env):
+    """Claude Code 2.1.30x writes one API response as several assistant lines (one per
+    content block) sharing message.id / requestId and repeating the same usage, plus
+    api-request (send time) and api-request-blob records that are not conversation.
+    The api-request for the NEXT call can be written before this response's lines."""
+    hook, collector, t = env
+    t.prompt("Lint the file")
+    first_request = t.line("api-request", None, id="req-ref-1", requestDigest="x")
+    sent_at = t.t
+    t.tick(4)
+    usage = {"input_tokens": 2, "output_tokens": 635, "cache_read_input_tokens": 490290}
+    for kind in ("api-request-blob", "api-request-blob"):
+        with open(t.path, "a") as f:
+            f.write(json.dumps({"type": kind, "hash": "h", "message": {"content": [{"type": "text", "text": "REQUEST BLOB"}]}}) + "\n")
+    # The next request's record lands BEFORE this response's lines, with a later time.
+    next_request_ts = t.t + 3
+    with open(t.path, "a") as f:
+        f.write(json.dumps({"type": "api-request", "id": "req-ref-2", "timestamp": iso(next_request_ts)}) + "\n")
+    for content in (
+        [{"type": "thinking", "thinking": ""}],
+        [{"type": "thinking", "thinking": "plan the fix"}],
+        [{"type": "tool_use", "id": "toolu_x", "name": "Bash", "input": {"command": "ruff check"}}],
+    ):
+        t.line("assistant", {"id": "msg_1", "role": "assistant", "model": "claude-opus-5-5", "content": content, "usage": usage},
+               requestId="req_1", requestRef="req-ref-1")
+    t.result("toolu_x", "E731 ...")
+    t.line("attachment", None)
+    t.line("assistant", {"id": "msg_2", "role": "assistant", "model": "claude-opus-5-5",
+                         "content": [{"type": "text", "text": "Fixed"}], "usage": {"input_tokens": 1, "output_tokens": 3}},
+           requestId="req_2", requestRef="req-ref-2")
+    fire(hook, t, "Stop")
+
+    chats = [s for s in collector.spans if s["name"].startswith("claude.chat")]
+    assert len(chats) == 2  # not one per line, nothing from api-request / blobs
+    first = next(s for s in chats if attrs(s).get("gen_ai.usage.completion_tokens") == "635")
+    a = attrs(first)
+    assert a["gen_ai.usage.prompt_tokens"] == "2"  # usage counted once, not summed per line
+    assert a["gen_ai.usage.cache_read_input_tokens"] == "490290"
+    assert json.loads(a["gen_ai.completion.0.tool_calls"])[0]["function"]["name"] == "Bash"
+    assert a["gen_ai.completion.0.content"]  # a tool-call-only response is not empty
+    assert a["gen_ai.completion.0.reasoning_content"] == "plan the fix"
+    start = int(first["startTimeUnixNano"]) / 1e9
+    end = int(first["endTimeUnixNano"]) / 1e9
+    assert abs(start - sent_at) < 0.01  # starts when its api-request was sent
+    assert end - start > 3  # real latency, not 0
+    second = next(s for s in chats if s is not first)
+    assert abs(int(second["startTimeUnixNano"]) / 1e9 - next_request_ts) < 0.01
+    assert all("REQUEST BLOB" not in json.dumps(s) for s in collector.spans)

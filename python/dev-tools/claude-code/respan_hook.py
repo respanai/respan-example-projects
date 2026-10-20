@@ -78,6 +78,7 @@ def _int_env(name: str, default: int) -> int:
 
 MAX_CHARS = _int_env("CC_RESPAN_MAX_CHARS", 4000)
 MAX_SPANS_PER_REQUEST = 500
+MAX_PENDING_REQUESTS = 1000
 MAX_BYTES_PER_REQUEST = 4 * 1024 * 1024
 # Lines read per file per commit: the state is saved after each chunk is accepted.
 MAX_CHUNK_BYTES = _int_env("CC_RESPAN_CHUNK_BYTES", 2 * 1024 * 1024)
@@ -385,6 +386,8 @@ class SpanBuilder:
         links: Optional[List[Dict[str, Any]]] = None,
         is_error: bool = False,
         error_message: str = "",
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        reasoning: str = "",
     ) -> None:
         start = start if start is not None else end
         end = end if end is not None else start
@@ -403,9 +406,13 @@ class SpanBuilder:
             if input_text:
                 attrs["gen_ai.prompt.0.role"] = "user"
                 attrs["gen_ai.prompt.0.content"] = input_text
-            if output_text:
+            if output_text or tool_calls or reasoning:
                 attrs["gen_ai.completion.0.role"] = "assistant"
                 attrs["gen_ai.completion.0.content"] = output_text
+            if tool_calls:
+                attrs["gen_ai.completion.0.tool_calls"] = json.dumps(tool_calls, ensure_ascii=False)
+            if reasoning:
+                attrs["gen_ai.completion.0.reasoning_content"] = reasoning
         else:
             attrs["traceloop.span.kind"] = {"agent": "agent", "tool": "tool"}.get(log_type, "task")
             if input_text:
@@ -506,6 +513,9 @@ def new_parser() -> Dict[str, Any]:
         "tools": {},  # open tool_use id -> {...}
         "last_ts": None,
         "last_input": "",
+        # api-request record id -> its timestamp (when the request was sent). A
+        # response's requestRef points at it: that is the response's start time.
+        "requests": {},
     }
 
 
@@ -659,6 +669,11 @@ class FileProcessor:
             return
         self.p["message"] = None
         name = f"claude.chat ({msg['model']})" if msg.get("model") else "claude.chat"
+        output = msg.get("output", "")
+        tool_calls = msg.get("tool_calls") or []
+        if not output and tool_calls:
+            # A tool-call-only response: say what it called rather than nothing.
+            output = "\n".join(f"[tool_use] {c['function']['name']}" for c in tool_calls)
         self.builder.add(
             trace_id=msg["trace"],
             span_id=msg["span"],
@@ -668,26 +683,17 @@ class FileProcessor:
             start=msg["start"],
             end=msg["end"],
             input_text=msg.get("input", ""),
-            output_text=truncate(msg.get("output", "")),
+            output_text=truncate(output),
             model=msg.get("model"),
             usage=msg.get("usage"),
+            tool_calls=tool_calls,
+            reasoning=truncate("\n\n".join(msg.get("thinking", []))),
             metadata={
                 "claude_code.request_id": msg.get("request_id"),
                 "claude_code.stop_reason": msg.get("stop_reason"),
                 "claude_code.agent_id": self.agent_id,
             },
         )
-        for idx, thinking in enumerate(msg.get("thinking", [])):
-            self.builder.add(
-                trace_id=msg["trace"],
-                span_id=span_id_for(self.session_id, f"thinking:{msg['id']}:{idx}"),
-                parent_id=msg["span"],
-                name="Thinking",
-                log_type="task",
-                start=msg["start"],
-                end=msg["end"],
-                output_text=thinking,
-            )
 
     def on_assistant(self, line: Dict[str, Any], ts: Optional[float]) -> None:
         ctx = self.context()
@@ -695,23 +701,31 @@ class FileProcessor:
             return
         trace, parent = ctx
         message = line.get("message") or {}
-        msg_id = str(message.get("id") or line.get("uuid") or ts)
+        # One API response is written as several lines (one per content block), all
+        # with the same message.id / requestId and the same usage.
+        msg_id = str(message.get("id") or line.get("requestId") or line.get("uuid") or ts)
         current = self.p.get("message")
         if current and current["id"] != msg_id:
             self.flush_message()
             current = None
         if not current:
+            start = self.p.setdefault("requests", {}).pop(str(line.get("requestRef") or ""), None)
+            if start is None:
+                start = self.p.get("last_ts")
+            if start is None or (ts is not None and start > ts):
+                start = ts
             current = {
                 "id": msg_id,
                 "trace": trace,
                 "parent": parent,
                 "span": span_id_for(self.session_id, f"llm:{msg_id}"),
-                "start": self.p.get("last_ts") or ts,
+                "start": start,
                 "end": ts,
                 "model": message.get("model"),
                 "input": self.p.get("last_input", ""),
                 "output": "",
                 "thinking": [],
+                "tool_calls": [],
                 "usage": None,
             }
             self.p["message"] = current
@@ -732,6 +746,14 @@ class FileProcessor:
             if block.get("thinking"):
                 current["thinking"].append(truncate(str(block["thinking"])))
         for block in blocks(content, "tool_use"):
+            current["tool_calls"].append({
+                "id": str(block.get("id") or ""),
+                "type": "function",
+                "function": {
+                    "name": str(block.get("name") or "tool"),
+                    "arguments": truncate(json.dumps(block.get("input") or {}, ensure_ascii=False)),
+                },
+            })
             self.open_tool(block, trace, parent, ts)
 
     # -- tools ---------------------------------------------------------------- #
@@ -815,9 +837,15 @@ class FileProcessor:
         whose spawning Agent call is not known yet)."""
         ts = parse_ts(line.get("timestamp"))
         kind = line.get("type")
+        if kind == "api-request" and line.get("id") and ts:
+            pending = self.p.setdefault("requests", {})
+            pending[str(line["id"])] = ts
+            while len(pending) > MAX_PENDING_REQUESTS:
+                pending.pop(next(iter(pending)))
+            return True
         if kind not in ("user", "assistant"):
-            if ts:
-                self.p["last_ts"] = ts
+            # api-request-blob, attachment, mode, ... are not conversation lines and
+            # their timestamps are out of order with it: ignore them entirely.
             return True
         if self.kind == "main":
             if line.get("isSidechain"):
