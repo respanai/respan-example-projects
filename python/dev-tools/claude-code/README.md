@@ -9,8 +9,7 @@ captured in full, with every parent-child relationship kept.
 ```
 Session (thread claudecode_<session id>)
 ├─ Trace: Turn 1: "Investigate the bug"          root span, links to nothing
-│  ├─ claude.chat (claude-opus-...)               one span per model response: tokens, cache, model
-│  │  └─ Thinking
+│  ├─ claude.chat (claude-opus-...)               one span per model response: tokens, cache, reasoning, tool calls
 │  ├─ Tool: Read / Bash / Edit ...                input, output, duration, errors
 │  └─ Tool: Agent                                 the call that spawned a sub-agent
 │     └─ Sub-agent: <description>                 the sub-agent's own run
@@ -33,10 +32,11 @@ Session (thread claudecode_<session id>)
   of the session they resumed (`resumed_from`) and do not re-send the copied history.
 - **Sent while the session runs**: on every tool call, sub-agent finish and response,
   not only at the end.
-- **Nothing lost, nothing duplicated**: the hook reads each transcript from where it
-  stopped (it never re-reads a file from the start), only moves on after Respan
-  accepted the spans, and derives span ids from the transcript, so a retry re-sends
-  the same ids.
+- **Nothing lost**: the hook reads each transcript from where it stopped (it never
+  re-reads a file from the start) and only moves on after Respan accepted the spans.
+  Span ids come from the transcript, so a retry re-sends the same ids: if a send timed
+  out after Respan had stored it, that span is stored twice under one span id (the
+  trace view shows it once; the logs list shows both).
 - **Never slows Claude Code down**: the hook queues the event and returns
   (about 0.1 s); a background worker does the export. It always exits 0 and prints
   nothing.
