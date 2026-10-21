@@ -1,219 +1,128 @@
+"""Local released SDK/provider examples with explicit trace export opt-in."""
+
 from __future__ import annotations
 
-import io
 import json
 import os
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
-import boto3
-from botocore.response import StreamingBody
-from botocore.stub import Stubber
-from dotenv import load_dotenv
-from respan import Respan, propagate_attributes
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan_instrumentation_sagemaker import SageMakerInstrumentor
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
-DEFAULT_REGION = "us-east-1"
-DEFAULT_MODEL = "gpt-4o-mini"
-STUB_ENDPOINT_NAME = "respan-sagemaker-stub-endpoint"
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE, RESPAN_METADATA
 
 
-def load_root_env() -> None:
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
+class Markers(SpanProcessor):
+    def __init__(self, metadata):
+        self.metadata = metadata
+
+    def on_start(self, span, parent_context=None):
+        span.set_attribute(RESPAN_METADATA, json.dumps(self.metadata))
+        for k, v in self.metadata.items():
+            span.set_attribute(RESPAN_METADATA + "." + k, v)
+
+    def on_end(self, span):
+        pass
 
 
-def example_run_id() -> str:
-    load_root_env()
-    return os.getenv("RESPAN_EXAMPLE_RUN_ID") or f"sagemaker-local-{uuid4().hex[:12]}"
-
-
-def respan_api_key() -> str | None:
-    load_root_env()
-    return os.getenv("RESPAN_API_KEY") or os.getenv("RESPAN_GATEWAY_API_KEY")
-
-
-def respan_base_url() -> str:
-    load_root_env()
-    return (
-        os.getenv("RESPAN_BASE_URL")
-        or os.getenv("RESPAN_GATEWAY_BASE_URL")
-        or DEFAULT_RESPAN_BASE_URL
-    ).rstrip("/")
-
-
-def make_respan(example_name: str) -> Respan:
-    run_id = example_run_id()
-    return Respan(
-        api_key=respan_api_key(),
-        base_url=respan_base_url(),
-        app_name="sagemaker-examples",
-        instrumentations=[SageMakerInstrumentor()],
-        environment=os.getenv("RESPAN_ENVIRONMENT", "example"),
-        metadata={
-            "integration": "sagemaker",
-            "example_set": "sagemaker",
-            "example": example_name,
-            "run_id": run_id,
-            "example_run_id": run_id,
-        },
-        is_batching_enabled=False,
-        log_level=os.getenv("RESPAN_LOG_LEVEL", "WARNING"),
-    )
-
-
-def sagemaker_mode() -> str:
-    load_root_env()
-    mode = os.getenv("SAGEMAKER_EXAMPLE_MODE", "auto").lower()
-    if mode in {"live", "stub"}:
-        return mode
-    return "live" if os.getenv("SAGEMAKER_ENDPOINT_NAME") else "stub"
-
-
-def use_live_sagemaker() -> bool:
-    return sagemaker_mode() == "live"
-
-
-def endpoint_name() -> str:
-    load_root_env()
-    endpoint = os.getenv("SAGEMAKER_ENDPOINT_NAME")
-    if use_live_sagemaker():
-        if not endpoint:
-            raise RuntimeError(
-                "SAGEMAKER_ENDPOINT_NAME is required when SAGEMAKER_EXAMPLE_MODE=live."
+class Runtime:
+    def __init__(self, name, capture=True):
+        self.name = name
+        self.run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID") or "sagemaker-" + uuid4().hex
+        self.provider = TracerProvider()
+        self.memory = InMemorySpanExporter()
+        self.wire = []
+        self.provider.add_span_processor(
+            Markers(
+                {
+                    "integration": "sagemaker",
+                    "scenario": name,
+                    "run_id": self.run_id,
+                    "example_run_id": self.run_id,
+                }
             )
-        return endpoint
-    return endpoint or STUB_ENDPOINT_NAME
-
-
-def aws_region() -> str:
-    load_root_env()
-    return (
-        os.getenv("AWS_REGION")
-        or os.getenv("AWS_DEFAULT_REGION")
-        or os.getenv("SAGEMAKER_REGION")
-        or DEFAULT_REGION
-    )
-
-
-def model_name() -> str:
-    load_root_env()
-    return os.getenv("SAGEMAKER_MODEL_ID") or os.getenv("RESPAN_MODEL") or DEFAULT_MODEL
-
-
-def custom_attributes() -> str:
-    return f"respan_model={model_name()}"
-
-
-def make_client():
-    kwargs: dict[str, Any] = {"region_name": aws_region()}
-    if not use_live_sagemaker():
-        kwargs.update(
-            aws_access_key_id="stub",
-            aws_secret_access_key="stub",
-            aws_session_token="stub",
         )
-    return boto3.client("sagemaker-runtime", **kwargs)
+        self.provider.add_span_processor(SimpleSpanProcessor(self.memory))
+        if os.getenv("RESPAN_EXAMPLE_EXPORT") == "1":
+            from dotenv import load_dotenv
+            from respan_tracing.exporters import RespanSpanExporter
 
+            load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+            key = os.getenv("RESPAN_API_KEY") or os.getenv("RESPAN_GATEWAY_API_KEY")
+            if not key:
+                raise RuntimeError("RESPAN_API_KEY required for explicit trace export")
+            exporter = RespanSpanExporter(
+                endpoint=os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
+                api_key=key,
+            )
+            original = exporter._session.post
 
-def workflow_name(example_name: str) -> str:
-    normalized_name = example_name.replace("-", "_")
-    return f"sagemaker_{normalized_name}"
+            def post(url, *args, **kwargs):
+                payload = (
+                    json.loads(kwargs["data"])
+                    if kwargs.get("data")
+                    else kwargs.get("json")
+                )
+                response = original(url, *args, **kwargs)
+                if os.getenv("RESPAN_EXAMPLE_WIRE_DIR"):
+                    self.wire.append(
+                        {"payload": payload, "http_status": response.status_code}
+                    )
+                return response
 
-
-def make_custom_identifier(example_name: str) -> str:
-    return f"sagemaker-{example_name}-{uuid4().hex[:8]}"
-
-
-@contextmanager
-def example_attributes(example_name: str, custom_identifier: str | None = None):
-    custom_identifier = custom_identifier or make_custom_identifier(example_name)
-    current_workflow_name = workflow_name(example_name)
-    run_id = example_run_id()
-    with propagate_attributes(
-        custom_identifier=custom_identifier,
-        trace_group_identifier=current_workflow_name,
-        metadata={
-            "example": example_name,
-            "example_set": "sagemaker",
-            "run_id": run_id,
-            "example_run_id": run_id,
-            "execution_id": custom_identifier,
-            "workflow_name": current_workflow_name,
-            "sagemaker_mode": sagemaker_mode(),
-        },
-    ):
-        yield custom_identifier
-
-
-def json_bytes(payload: Any) -> bytes:
-    return json.dumps(payload).encode("utf-8")
-
-
-def streaming_body(payload: Any) -> StreamingBody:
-    data = json_bytes(payload)
-    return StreamingBody(io.BytesIO(data), len(data))
-
-
-@contextmanager
-def stubbed_response(
-    client: Any,
-    method_name: str,
-    response: dict[str, Any],
-    expected_params: dict[str, Any],
-):
-    if use_live_sagemaker():
-        yield
-        return
-
-    stubber = Stubber(client)
-    stubber.add_response(method_name, response, expected_params)
-    with stubber:
-        yield
-
-
-def read_json_body(response: dict[str, Any]) -> Any:
-    body = response["Body"].read()
-    if isinstance(body, str):
-        body = body.encode("utf-8")
-    return json.loads(body.decode("utf-8"))
-
-
-def collect_stream_text(response: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for event in response["Body"]:
-        payload_part = event.get("PayloadPart") if isinstance(event, dict) else None
-        payload_bytes = (
-            payload_part.get("Bytes") if isinstance(payload_part, dict) else None
+            exporter._session.post = post
+            self.provider.add_span_processor(SimpleSpanProcessor(exporter))
+        self.owner = SageMakerInstrumentor(
+            tracer_provider=self.provider, capture_content=capture
         )
-        if payload_bytes is None:
-            continue
-        payload = json.loads(payload_bytes.decode("utf-8"))
-        token = payload.get("token") if isinstance(payload, dict) else None
-        if isinstance(token, dict) and isinstance(token.get("text"), str):
-            parts.append(token["text"])
-        elif isinstance(payload, dict) and isinstance(
-            payload.get("generated_text"), str
-        ):
-            parts.append(payload["generated_text"])
-    return "".join(parts)
+        self.owner.activate()
 
+    def workflow(self):
+        return self.provider.get_tracer("application").start_as_current_span(
+            "sagemaker.example", attributes={RESPAN_LOG_TYPE: "workflow"}
+        )
 
-def print_run_header(example_name: str, custom_identifier: str) -> None:
-    print(f"example_run_id={example_run_id()}", flush=True)
-    print(f"custom_identifier={custom_identifier}", flush=True)
-    print(f"workflow_name={workflow_name(example_name)}", flush=True)
-    print(f"sagemaker_mode={sagemaker_mode()}", flush=True)
-    print(f"model={model_name()}", flush=True)
-
-
-def print_result(example_name: str, custom_identifier: str, result: Any) -> None:
-    print(f"example={example_name}")
-    print(f"custom_identifier={custom_identifier}")
-    print(f"workflow_name={workflow_name(example_name)}")
-    print(f"sagemaker_mode={sagemaker_mode()}")
-    print(f"model={model_name()}")
-    print(json.dumps(result, indent=2, sort_keys=True))
+    def close(self):
+        self.owner.deactivate()
+        self.provider.force_flush()
+        spans = self.memory.get_finished_spans()
+        ids = {s.context.span_id for s in spans}
+        assert all(s.parent is None or s.parent.span_id in ids for s in spans)
+        report = {
+            "run_id": self.run_id,
+            "scenario": self.name,
+            "spans": [
+                {
+                    "name": s.name,
+                    "trace_id": format(s.context.trace_id, "032x"),
+                    "span_id": format(s.context.span_id, "016x"),
+                    "parent_span_id": format(s.parent.span_id, "016x")
+                    if s.parent
+                    else None,
+                    "attributes": dict(s.attributes),
+                    "status": s.status.status_code.name,
+                    "status_description": s.status.description,
+                    "events": [
+                        {"name": e.name, "attributes": dict(e.attributes)}
+                        for e in s.events
+                    ],
+                }
+                for s in spans
+            ],
+        }
+        for variable, data in [
+            ("RESPAN_EXAMPLE_REPORT_DIR", report),
+            (
+                "RESPAN_EXAMPLE_WIRE_DIR",
+                {"run_id": self.run_id, "scenario": self.name, "entries": self.wire},
+            ),
+        ]:
+            directory = os.getenv(variable)
+            if directory:
+                path = Path(directory)
+                path.mkdir(parents=True, exist_ok=True)
+                (path / (self.name + ".json")).write_text(json.dumps(data, indent=2))
+        print(f"scenario={self.name} run_id={self.run_id} local_spans={len(spans)}")
+        self.provider.shutdown()
