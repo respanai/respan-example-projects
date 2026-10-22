@@ -1,8 +1,7 @@
 """Bare-minimum Agno agent run with Respan tracing."""
 
-from respan import workflow
-
 from _shared import build_agent, create_respan, example_attributes, print_result
+from respan import workflow
 
 
 @workflow(name="agno_01_hello_world")

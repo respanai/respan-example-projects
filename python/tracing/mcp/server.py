@@ -5,14 +5,13 @@ import sys
 if "--exit-immediately" in sys.argv:
     raise SystemExit(3)
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.server import Settings
+from openinference.instrumentation.mcp import MCPInstrumentor
 
-# MCP 1.x with current Pydantic otherwise warns while resolving the generic
-# lifespan annotation. Rebuild before FastMCP constructs its Settings instance.
-Settings.model_rebuild(force=True)
+MCPInstrumentor().instrument()
 
-mcp = FastMCP("respan-mcp-example-server")
+from mcp.server.mcpserver import MCPServer
+
+mcp = MCPServer("respan-mcp-example-server")
 
 
 @mcp.tool()
@@ -37,12 +36,25 @@ def paris_profile() -> str:
     )
 
 
+@mcp.resource("profile://city/{city}")
+def city_profile(city: str) -> str:
+    return f"Profile for {city}: deterministic local MCP resource."
+
+
 @mcp.prompt(name="city_research_prompt")
 def city_research_prompt(city: str) -> str:
     return (
         f"Create a compact research brief for {city}. Include current travel "
         "constraints, local context, and three source questions to verify."
     )
+
+
+@mcp.tool()
+def current_trace_id() -> str:
+    from opentelemetry import trace
+
+    context = trace.get_current_span().get_span_context()
+    return f"{context.trace_id:032x}" if context.is_valid else ""
 
 
 if __name__ == "__main__":

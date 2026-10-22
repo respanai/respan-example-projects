@@ -2,36 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-load_dotenv(ROOT_DIR / ".env", override=True)
+load_dotenv(ROOT_DIR / ".env", override=False)
 
 os.environ.setdefault("LANGFUSE_PUBLIC_KEY", "pk-lf-respan-example")
 os.environ.setdefault("LANGFUSE_SECRET_KEY", "sk-lf-respan-example")
 os.environ.setdefault("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 
-from langfuse import get_client, observe
+from langfuse import get_client, observe, propagate_attributes
 from respan import Respan
 from respan_instrumentation_langfuse import LangfuseInstrumentor
 
-RUN_ID = os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip() or "langfuse-local"
+RUN_ID = (
+    os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip() or f"langfuse-{uuid4().hex[:12]}"
+)
 MODEL = os.getenv("RESPAN_LANGFUSE_MODEL", "gpt-4o-mini")
-EXPECTED_SPANS = 6
+EXPECTED_SPANS = 14
 
 
 def _mark_trace(workflow_name: str, input_value: object) -> None:
-    get_client().update_current_trace(
-        name=workflow_name,
-        user_id="langfuse-example-user",
-        session_id=f"{RUN_ID}:session",
+    get_client().update_current_span(
         input=input_value,
         metadata={
             "example": "langfuse",
             "example_run_id": RUN_ID,
+            "run_id": RUN_ID,
             "workflow_name": workflow_name,
         },
     )
@@ -83,7 +85,80 @@ def research_workflow() -> str:
     )
 
 
+@observe(as_type="agent", name="embedding-agent")
+def embedding_agent() -> list[list[float]]:
+    vectors = [[0.25, 0.5, 0.75]]
+    with get_client().start_as_current_observation(
+        name="embed-source",
+        as_type="embedding",
+        model="example-embedding-model",
+        input=["OpenTelemetry"],
+        output=vectors,
+        usage_details={"input": 3, "total": 3},
+    ):
+        pass
+    return vectors
+
+
+@observe(as_type="guardrail", name="validate-query")
+def validate_query(query: str) -> dict[str, bool]:
+    return {"allowed": bool(query.strip())}
+
+
+@observe(as_type="tool", name="controlled-failure")
+def controlled_failure() -> None:
+    raise ValueError("Deterministic Langfuse example failure")
+
+
+@observe(name="langfuse_features.workflow")
+def features_workflow() -> dict[str, object]:
+    _mark_trace("langfuse_features.workflow", {"query": "OpenTelemetry"})
+    result = {
+        "guardrail": validate_query("OpenTelemetry"),
+        "embedding": embedding_agent(),
+    }
+    try:
+        controlled_failure()
+    except ValueError:
+        result["controlled_error"] = True
+    return result
+
+
+@observe(name="langfuse_async.workflow")
+async def async_workflow() -> dict[str, object]:
+    _mark_trace("langfuse_async.workflow", {"query": "weather in Paris"})
+    call = {
+        "id": "call-weather-current",
+        "type": "function",
+        "function": {"name": "weather", "arguments": '{"city":"Paris"}'},
+    }
+    definition = {
+        "type": "function",
+        "function": {"name": "weather", "parameters": {"type": "object"}},
+    }
+    with get_client().start_as_current_observation(
+        name="single-message-tool-call",
+        as_type="generation",
+        model=MODEL,
+        input={"role": "user", "content": "Check the weather in Paris"},
+        output={"role": "assistant", "content": None, "tool_calls": [call]},
+        model_parameters={"tools": [definition]},
+        usage_details={"input": 7, "output": 3},
+    ):
+        await asyncio.sleep(0)
+    # Missing captured content must stay absent instead of becoming a null prompt.
+    with get_client().start_as_current_observation(
+        name="usage-only-generation",
+        as_type="generation",
+        model=MODEL,
+        usage_details={"input": 2, "output": 1},
+    ):
+        await asyncio.sleep(0)
+    return {"tool_call": call, "content_free_generation": True}
+
+
 def main() -> None:
+    print(f"run_id={RUN_ID}", flush=True)
     api_key = os.environ["RESPAN_API_KEY"]
     respan = Respan(
         api_key=api_key,
@@ -97,8 +172,21 @@ def main() -> None:
     client = get_client()
 
     try:
-        print(simple_workflow())
-        print(research_workflow())
+        for workflow in (simple_workflow, research_workflow, features_workflow):
+            with propagate_attributes(
+                user_id="langfuse-example-user",
+                session_id=f"{RUN_ID}:session",
+                trace_name=f"langfuse_{workflow.__name__.removesuffix('_workflow')}.workflow",
+                metadata={"run_id": RUN_ID, "example_run_id": RUN_ID},
+            ):
+                print(workflow())
+        with propagate_attributes(
+            user_id="langfuse-example-user",
+            session_id=f"{RUN_ID}:session",
+            trace_name="langfuse_async.workflow",
+            metadata={"run_id": RUN_ID, "example_run_id": RUN_ID},
+        ):
+            print(asyncio.run(async_workflow()))
         client.flush()
         respan.flush()
         if instrumentor.exported_span_count != EXPECTED_SPANS:
@@ -108,7 +196,7 @@ def main() -> None:
             )
         print(f"Langfuse exported {EXPECTED_SPANS} canonical spans.")
     finally:
-        client.flush()
+        client.shutdown()
         instrumentor.uninstrument()
         respan.shutdown()
 
