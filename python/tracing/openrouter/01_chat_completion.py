@@ -1,27 +1,19 @@
-"""OpenRouter chat completion through the OpenAI-compatible Python client."""
-
-from _shared import close_sync, make_client, make_respan
-from respan import workflow
+from _shared import MODEL, native_client, tracing, workflow
 
 
-def main() -> None:
-    respan = None
-    client = None
-    try:
-        respan = make_respan(scenario="basic_chat")
-        client, model = make_client()
+def main():
+    with tracing("chat"), native_client() as client:
 
-        @workflow(name="openrouter_basic_chat")
-        def run(prompt: str) -> str:
-            response = client.chat.completions.create(
-                model=model,
+        @workflow(name="openrouter_native_chat")
+        def run(prompt):
+            response = client.chat.send(
+                model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
+                provider={"zdr": True, "sort": "price"},
             )
-            return response.choices[0].message.content or ""
+            return response.choices[0].message.content
 
-        print(run("Say hello from OpenRouter in one concise sentence."))
-    finally:
-        close_sync(respan=respan, client=client)
+        print(run("Reply with a sentence about observability."))
 
 
 if __name__ == "__main__":

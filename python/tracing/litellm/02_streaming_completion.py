@@ -1,9 +1,14 @@
+import os
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import litellm
 from _shared import (
     GATEWAY_API_KEY,
     GATEWAY_BASE_URL,
     MODEL,
     create_respan,
+    provider_client,
     run_with_example_attributes,
 )
 from respan import workflow
@@ -23,6 +28,7 @@ def _chunk_text(chunk) -> str:
 @workflow(name=WORKFLOW_NAME)
 def litellm_streaming_completion() -> str:
     stream = litellm.completion(
+        **provider_client(stream=True),
         api_key=GATEWAY_API_KEY,
         api_base=GATEWAY_BASE_URL,
         model=MODEL,

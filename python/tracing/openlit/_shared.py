@@ -1,58 +1,219 @@
-"""Shared deterministic and optional-live setup for OpenLIT examples."""
+"""Released-SDK loopback fixtures; explicit opt-in for trace export."""
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
-import sys
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import wraps
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.metadata import distribution
 from pathlib import Path
 from typing import Any, NamedTuple
-from urllib.parse import unquote, urlparse
 
+import openlit
 from dotenv import load_dotenv
+from openai import AsyncOpenAI, OpenAI
+from openlit.semcov import SemanticConvention
+from opentelemetry import trace
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (
+    GEN_AI_OPERATION_NAME,
+    GEN_AI_TOOL_NAME,
+)
+from opentelemetry.semconv_ai import SpanAttributes
+from respan_instrumentation_openlit import OpenLITInstrumentor
+from respan_instrumentation_openlit._policy import allowed
+from respan_sdk.constants.span_attributes import RESPAN_METADATA
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 EXAMPLE_REPO_ROOT = EXAMPLE_DIR.parents[2]
-WORKSPACE_ROOT = EXAMPLE_REPO_ROOT.parent
-RESPAN_REPO_ROOT = WORKSPACE_ROOT / "respan"
-LOCAL_PACKAGE_ROOT = (
-    RESPAN_REPO_ROOT
-    / "python-sdks"
-    / "instrumentations"
-    / "respan-instrumentation-openlit"
-)
 DEFAULT_MODEL = "gpt-4.1-mini"
-
-
-def _add_local_paths() -> None:
-    paths = (
-        RESPAN_REPO_ROOT / "python-sdks" / "respan" / "src",
-        RESPAN_REPO_ROOT / "python-sdks" / "respan-tracing" / "src",
-        RESPAN_REPO_ROOT / "python-sdks" / "respan-sdk" / "src",
-        LOCAL_PACKAGE_ROOT / "src",
+EXPORT = os.getenv("RESPAN_EXPORT", "0") == "1"
+if EXPORT or os.getenv("RESPAN_OPENLIT_LIVE") == "1":
+    load_dotenv(
+        Path(os.getenv("RESPAN_ENV_FILE", str(EXAMPLE_REPO_ROOT / ".env"))),
+        override=False,
     )
-    for path in reversed(paths):
-        path_text = str(path)
-        if path.exists() and path_text not in sys.path:
-            sys.path.insert(0, path_text)
+RUN_ID = os.getenv("RESPAN_EXAMPLE_RUN_ID") or "openlit-" + uuid.uuid4().hex[:12]
 
 
-def _load_env_file(path: Path) -> None:
+def _load_env_file(path):
     load_dotenv(path, override=False)
 
 
-_load_env_file(EXAMPLE_REPO_ROOT / ".env")
-_add_local_paths()
+def require_run_id():
+    if (
+        RUN_ID != RUN_ID.strip()
+        or any(c in RUN_ID for c in "\r\n")
+        or len(RUN_ID.encode()) > 160
+    ):
+        raise RuntimeError(
+            "RESPAN_EXAMPLE_RUN_ID must be an exact marker of at most160 bytes"
+        )
+    return RUN_ID
 
-from openai import AsyncOpenAI, OpenAI
-from respan import Respan
-from respan_instrumentation_openlit import OpenLITInstrumentor
+
+def example_metadata(scenario):
+    return {
+        "run_id": require_run_id(),
+        "example_run_id": require_run_id(),
+        "framework": "openlit",
+        "scenario": scenario,
+        "example": scenario,
+        "example_set": "python/tracing/openlit",
+    }
+
+
+class Marker(SpanProcessor):
+    def __init__(self, scenario):
+        self.metadata = example_metadata(scenario)
+
+    def on_start(self, span, parent_context=None):
+        span.set_attribute(RESPAN_METADATA, json.dumps(self.metadata))
+        for key, value in self.metadata.items():
+            span.set_attribute(RESPAN_METADATA + "." + key, value)
+
+    def on_end(self, span):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def force_flush(self, timeout_millis=30000):
+        return True
+
+
+class Telemetry:
+    def __init__(self, provider, owner, exporter):
+        self.provider, self.owner, self.exporter = provider, owner, exporter
+
+    def flush(self):
+        self.provider.force_flush()
+
+    def shutdown(self):
+        self.provider.force_flush()
+        self.owner.deactivate()
+        spans = self.exporter.get_finished_spans()
+        print("LOCAL_TRACE_COUNT=" + str(len(spans)))
+        directory = os.getenv("OPENLIT_CAPTURE_DIR")
+        if directory:
+            path = Path(directory)
+            path.mkdir(parents=True, exist_ok=True)
+            path.joinpath(f"{RUN_ID}-{os.getpid()}.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "name": s.name,
+                            "span_id": f"{s.context.span_id:016x}",
+                            "trace_id": f"{s.context.trace_id:032x}",
+                            "parent_id": f"{s.parent.span_id:016x}"
+                            if s.parent
+                            else None,
+                            "status": s.status.status_code.name,
+                            "attributes": dict(s.attributes),
+                            "events": [
+                                {"name": e.name, "attributes": dict(e.attributes)}
+                                for e in s.events
+                            ],
+                        }
+                        for s in spans
+                    ],
+                    indent=2,
+                )
+            )
+        self.provider.shutdown()
+
+
+def create_respan(scenario, *, capture_content=True):
+    if EXPORT:
+        from respan_tracing import RespanTelemetry
+
+        RespanTelemetry(
+            app_name="openlit-" + scenario,
+            api_key=os.environ["RESPAN_API_KEY"],
+            base_url=os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
+            is_auto_instrument=False,
+            is_batching_enabled=False,
+        )
+        provider = trace.get_tracer_provider()
+    else:
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(Marker(scenario))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    owner = OpenLITInstrumentor(
+        capture_content=capture_content, max_content_length=4096
+    )
+    owner.activate()
+    return Telemetry(provider, owner, exporter)
+
+
+@contextmanager
+def example_scope(scenario):
+    yield
+
+
+def finish_respan(respan):
+    try:
+        respan.flush()
+    finally:
+        respan.shutdown()
+
+
+def _entity(kind, name):
+    def decorate(function):
+        @wraps(function)
+        def run(*args, **kwargs):
+            with openlit.start_trace(name) as native:
+                native.set_metadata(
+                    {
+                        GEN_AI_OPERATION_NAME: "execute_tool"
+                        if kind == "tool"
+                        else "invoke_workflow",
+                        GEN_AI_TOOL_NAME
+                        if kind == "tool"
+                        else SemanticConvention.GEN_AI_WORKFLOW_NAME: name,
+                    }
+                )
+                if allowed(trace.get_current_span()):
+                    actual = dict(
+                        inspect.signature(function).bind(*args, **kwargs).arguments
+                    )
+                    native.set_metadata(
+                        {
+                            SpanAttributes.TRACELOOP_ENTITY_INPUT: json.dumps(
+                                {"name": name, "arguments": actual}
+                                if kind == "tool"
+                                else actual
+                            )
+                        }
+                    )
+                result = function(*args, **kwargs)
+                if allowed(trace.get_current_span()):
+                    native.set_metadata(
+                        {SpanAttributes.TRACELOOP_ENTITY_OUTPUT: json.dumps(result)}
+                    )
+                return result
+
+        return run
+
+    return decorate
+
+
+def workflow(*, name):
+    return _entity("workflow", name)
+
+
+def tool(*, name):
+    return _entity("tool", name)
 
 
 class ProviderConfig(NamedTuple):
@@ -61,84 +222,6 @@ class ProviderConfig(NamedTuple):
     model: str
     embedding_model: str
     live: bool
-
-
-def require_run_id() -> str:
-    run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID")
-    if not run_id or run_id != run_id.strip() or any(char in run_id for char in "\r\n"):
-        raise RuntimeError(
-            "Set RESPAN_EXAMPLE_RUN_ID in the shell to the exact audit marker."
-        )
-    if len(run_id.encode("utf-8")) > 160:
-        raise RuntimeError("RESPAN_EXAMPLE_RUN_ID must be at most 160 UTF-8 bytes.")
-    return run_id
-
-
-def assert_local_package_link() -> None:
-    direct_url_text = distribution("respan-instrumentation-openlit").read_text(
-        "direct_url.json"
-    )
-    if not direct_url_text:
-        raise RuntimeError(
-            "Install respan-instrumentation-openlit from the local Respan checkout."
-        )
-    direct_url = json.loads(direct_url_text).get("url", "")
-    linked_path = Path(unquote(urlparse(direct_url).path)).resolve()
-    if linked_path != LOCAL_PACKAGE_ROOT.resolve():
-        raise RuntimeError(
-            "respan-instrumentation-openlit is not linked to the local Respan package."
-        )
-
-
-def example_metadata(scenario: str) -> dict[str, str]:
-    run_id = require_run_id()
-    return {
-        "example_set": "python/tracing/openlit",
-        "scenario": scenario,
-        "run_id": run_id,
-        "example_run_id": run_id,
-    }
-
-
-def create_respan(scenario: str, *, capture_content: bool = True) -> Respan:
-    assert_local_package_link()
-    api_key = os.getenv("RESPAN_API_KEY") or os.getenv("RESPAN_GATEWAY_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "Set RESPAN_API_KEY in respan-example-projects/.env for trace export."
-        )
-    return Respan(
-        api_key=api_key,
-        base_url=os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
-        app_name="openlit-python-examples",
-        metadata=example_metadata(scenario),
-        instrumentations=[
-            OpenLITInstrumentor(
-                capture_content=capture_content,
-                max_content_length=4_096,
-            )
-        ],
-        is_batching_enabled=False,
-        log_level=os.getenv("RESPAN_LOG_LEVEL", "WARNING"),
-    )
-
-
-@contextmanager
-def example_scope(scenario: str) -> Iterator[None]:
-    run_id = require_run_id()
-    with Respan.propagate_attributes(
-        trace_group_identifier=f"openlit:{run_id}",
-        custom_identifier=f"{run_id}:{scenario}",
-        metadata=example_metadata(scenario),
-    ):
-        yield
-
-
-def finish_respan(respan: Respan) -> None:
-    try:
-        respan.flush()
-    finally:
-        respan.shutdown()
 
 
 def _chat_payload(request: dict[str, Any]) -> dict[str, Any]:
@@ -179,12 +262,18 @@ def _chat_payload(request: dict[str, Any]) -> dict[str, Any]:
             "prompt_tokens": 12,
             "completion_tokens": 7,
             "total_tokens": 19,
+            "prompt_tokens_details": {"cached_tokens": 0},
+            "completion_tokens_details": {"reasoning_tokens": 0},
         },
     }
 
 
 def _response_payload(prompt: str, *, status: str = "completed") -> dict[str, Any]:
-    text = "OpenLIT Responses deterministic reply."
+    text = (
+        '{"city":"Paris"}'
+        if prompt == "typed-city"
+        else "OpenLIT Responses deterministic reply."
+    )
     return {
         "id": f"resp-openlit-{time.time_ns()}",
         "object": "response",
@@ -270,7 +359,7 @@ class _MockHandler(BaseHTTPRequestHandler):
                         {
                             "object": "embedding",
                             "index": 0,
-                            "embedding": [0.1, 0.2, 0.3],
+                            "embedding": [i / 5000 for i in range(5000)],
                         }
                     ],
                     "usage": {"prompt_tokens": 4, "total_tokens": 4},

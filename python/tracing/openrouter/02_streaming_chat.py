@@ -1,39 +1,24 @@
-"""OpenRouter streaming chat completion."""
-
-from _shared import close_sync, make_client, make_respan
-from respan import workflow
+from _shared import MODEL, native_client, tracing, workflow
 
 
-def main() -> None:
-    respan = None
-    client = None
-    try:
-        respan = make_respan(scenario="sync_stream")
-        client, model = make_client()
+def main():
+    with tracing("chat_stream"), native_client() as client:
 
-        @workflow(name="openrouter_streaming_chat")
-        def run(prompt: str) -> str:
-            chunks: list[str] = []
-            stream = client.chat.completions.create(
-                model=model,
+        @workflow(name="openrouter_native_chat_stream")
+        def run(prompt):
+            stream = client.chat.send(
+                model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 stream=True,
-                stream_options={"include_usage": True},
             )
             with stream:
-                for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        chunks.append(content)
-                        print(content, end="", flush=True)
-            print()
-            return "".join(chunks)
+                return "".join(
+                    chunk.choices[0].delta.content or ""
+                    for chunk in stream
+                    if chunk.choices
+                )
 
-        run("Write a four-line haiku about trace data.")
-    finally:
-        close_sync(respan=respan, client=client)
+        print(run("Explain trace flow briefly."))
 
 
 if __name__ == "__main__":

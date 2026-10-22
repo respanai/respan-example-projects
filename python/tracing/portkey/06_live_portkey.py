@@ -31,7 +31,7 @@ def trace_live(prompt: str) -> dict[str, str]:
 
 def main() -> None:
     if not live_configured():
-        print("SKIP: PORTKEY_API_KEY is not configured")
+        print("SKIP: live calls require RESPAN_PORTKEY_LIVE=1 and PORTKEY_API_KEY")
         return
     run_marker = marker()
     execution = execution_id()

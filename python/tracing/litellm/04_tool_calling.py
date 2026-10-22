@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import json
 
 import litellm
@@ -6,6 +10,7 @@ from _shared import (
     GATEWAY_BASE_URL,
     MODEL,
     create_respan,
+    provider_client,
     run_with_example_attributes,
 )
 from respan import workflow
@@ -30,6 +35,7 @@ TOOLS = [
 @workflow(name=WORKFLOW_NAME)
 def litellm_tool_calling() -> list[dict[str, object]]:
     response = litellm.completion(
+        **provider_client(tools=True),
         api_key=GATEWAY_API_KEY,
         api_base=GATEWAY_BASE_URL,
         model=MODEL,

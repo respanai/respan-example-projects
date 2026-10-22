@@ -13,13 +13,18 @@ from _shared import (
     print_result,
     workflow_name,
 )
+from opentelemetry import trace
+from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (
+    GEN_AI_TOOL_CALL_ID,
+)
 from respan import tool, workflow
 
 EXAMPLE_NAME = "tool-calling"
 
 
 @tool(name="get_weather")
-def get_weather(city: str) -> str:
+def get_weather(city: str, call_id: str) -> str:
+    trace.get_current_span().set_attribute(GEN_AI_TOOL_CALL_ID, call_id)
     return f"{city} is sunny and 72F."
 
 
@@ -50,7 +55,7 @@ def trace_tool(city: str) -> dict[str, str]:
         assistant = first.choices[0].message
         call = assistant.tool_calls[0]
         arguments = json.loads(call.function.arguments)
-        result = get_weather(arguments["city"])
+        result = get_weather(arguments["city"], call.id)
         messages.extend(
             [
                 assistant.model_dump(exclude_none=True),

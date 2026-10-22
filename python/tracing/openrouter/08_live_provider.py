@@ -1,37 +1,23 @@
-"""Optional credential-gated OpenRouter provider response validation."""
-
-from __future__ import annotations
-
 import os
 
-from _shared import close_sync, make_client, make_respan
-from respan import workflow
+from _shared import MODEL, native_client, tracing, workflow
 
 
-def main() -> None:
-    if not os.getenv("OPENROUTER_API_KEY"):
-        print("SKIP: set OPENROUTER_API_KEY to run live OpenRouter validation")
+def main():
+    if os.getenv("OPENROUTER_EXAMPLE_LIVE") != "1":
+        print("Live provider example skipped; set OPENROUTER_EXAMPLE_LIVE=1 to opt in.")
         return
+    with tracing("live_chat"), native_client(live=True) as client:
 
-    respan = None
-    client = None
-    try:
-        respan = make_respan(scenario="live_provider")
-        client, model = make_client(live=True)
-
-        @workflow(name="openrouter_live_provider")
-        def run(prompt: str) -> str:
-            response = client.chat.completions.create(
-                model=model,
+        @workflow(name="openrouter_native_live")
+        def run(prompt):
+            response = client.chat.send(
+                model=os.getenv("OPENROUTER_MODEL", MODEL),
                 messages=[{"role": "user", "content": prompt}],
             )
-            if response.usage is None:
-                raise AssertionError("live OpenRouter response did not include usage")
-            return response.choices[0].message.content or ""
+            return response.choices[0].message.content
 
-        print(run("Reply with exactly: live OpenRouter verified"))
-    finally:
-        close_sync(respan=respan, client=client)
+        print(run("Reply with one concise sentence about observability."))
 
 
 if __name__ == "__main__":

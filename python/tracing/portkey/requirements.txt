@@ -1,6 +1,5 @@
-portkey-ai>=2.3.4,<3
-openinference-instrumentation-portkey>=0.1.13,<0.2
+portkey-ai>=2.3.1,<3
+openinference-instrumentation-portkey>=0.1.11,<0.2
 python-dotenv>=1,<2
-respan-ai>=4.1,<5
-respan-instrumentation-openinference>=1.2.2,<2
+respan-ai>=4.2.3,<5
 respan-instrumentation-portkey>=0.1,<1

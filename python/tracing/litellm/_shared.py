@@ -1,5 +1,7 @@
 import os
 import time
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypeVar
@@ -9,21 +11,38 @@ from respan import Respan
 from respan_instrumentation_litellm import LiteLLMInstrumentor
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-load_dotenv(ROOT_DIR / ".env", override=True)
+load_dotenv(ROOT_DIR / ".env", override=False)
 
-RESPAN_API_KEY = os.environ["RESPAN_API_KEY"]
-GATEWAY_API_KEY = os.getenv("RESPAN_GATEWAY_API_KEY") or RESPAN_API_KEY
-GATEWAY_BASE_URL = (
-    os.getenv("RESPAN_GATEWAY_BASE_URL")
-    or os.getenv("RESPAN_BASE_URL")
-    or "https://api.respan.ai/api"
+RESPAN_API_KEY = (
+    os.getenv("RESPAN_API_KEY") or os.getenv("RESPAN_GATEWAY_API_KEY") or "fixture-only"
 )
-MODEL = os.getenv("RESPAN_LITELLM_MODEL") or os.getenv("RESPAN_MODEL", "gpt-4o-mini")
+MODE = os.getenv("RESPAN_LITELLM_MODE", "fixture").strip().lower()
+if MODE not in {"fixture", "live"}:
+    raise ValueError("RESPAN_LITELLM_MODE must be fixture or live")
+GATEWAY_API_KEY = (
+    (os.getenv("RESPAN_GATEWAY_API_KEY") or RESPAN_API_KEY)
+    if MODE == "live"
+    else "fixture-only"
+)
+GATEWAY_BASE_URL = (
+    (
+        os.getenv("RESPAN_GATEWAY_BASE_URL")
+        or os.getenv("RESPAN_BASE_URL")
+        or "https://api.respan.ai/api"
+    )
+    if MODE == "live"
+    else "https://fixture.invalid/v1"
+)
+MODEL = (
+    (os.getenv("RESPAN_LITELLM_MODEL") or os.getenv("RESPAN_MODEL", "gpt-4o-mini"))
+    if MODE == "live"
+    else "openai/fixture-model"
+)
 
 
 def _example_run_id() -> str:
     configured = os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip()
-    if configured and "codex" not in configured.lower():
+    if configured:
         return configured
     return f"litellm-{int(time.time())}"
 
@@ -50,7 +69,7 @@ def run_with_example_attributes(
     action: Callable[[], T],
 ) -> T:
     with respan.propagate_attributes(
-        trace_group_identifier=workflow_name,
+        trace_group_identifier=f"{workflow_name}-{RUN_ID}",
         custom_identifier=f"{RUN_ID}:{workflow_name}",
         metadata={
             "example": "litellm",
@@ -68,7 +87,7 @@ async def run_async_with_example_attributes(
     action: Callable[[], Awaitable[T]],
 ) -> T:
     with respan.propagate_attributes(
-        trace_group_identifier=workflow_name,
+        trace_group_identifier=f"{workflow_name}-{RUN_ID}",
         custom_identifier=f"{RUN_ID}:{workflow_name}",
         metadata={
             "example": "litellm",
@@ -77,3 +96,11 @@ async def run_async_with_example_attributes(
         },
     ):
         return await action()
+
+
+def provider_client(*, asynchronous=False, **options):
+    if MODE == "live":
+        return {}
+    from _fixtures import client
+
+    return {"client": client(async_=asynchronous, **options)}

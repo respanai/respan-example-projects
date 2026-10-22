@@ -1,47 +1,24 @@
-"""OpenRouter structured JSON output."""
-
-from __future__ import annotations
-
-import json
-
-from _shared import close_sync, make_client, make_respan
-from respan import workflow
+from _shared import MODEL, compatible_client, tracing, workflow
+from pydantic import BaseModel
 
 
-def main() -> None:
-    respan = None
-    client = None
-    try:
-        respan = make_respan(scenario="structured_output")
-        client, model = make_client()
+class Summary(BaseModel):
+    summary: str
 
-        @workflow(name="openrouter_structured_output")
-        def run(topic: str) -> dict[str, object]:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Return only valid JSON with keys title, difficulty, and "
-                            "steps. steps must be an array of three short strings."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Create a mini plan for: {topic}",
-                    },
-                ],
-                response_format={"type": "json_object"},
+
+def main():
+    with tracing("structured_parse"), compatible_client() as client:
+
+        @workflow(name="openrouter_compatible_parse")
+        def run(topic):
+            response = client.chat.completions.parse(
+                model=MODEL,
+                messages=[{"role": "user", "content": topic}],
+                response_format=Summary,
             )
-            content = response.choices[0].message.content or "{}"
-            parsed = json.loads(content)
-            print(json.dumps(parsed, indent=2))
-            return parsed
+            return response.choices[0].message.parsed.model_dump()
 
-        run("observability for OpenRouter apps")
-    finally:
-        close_sync(respan=respan, client=client)
+        print(run("Return a summary about observability."))
 
 
 if __name__ == "__main__":

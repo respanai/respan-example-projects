@@ -1,4 +1,4 @@
-"""Shared Portkey example setup with exact marker propagation."""
+"""Native SDK fixtures by default, with separately enabled trace export/live calls."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
-from _local_gateway import local_gateway_base_url, shutdown_local_gateway
+import httpx
+from _fixture import Transport
 from dotenv import load_dotenv
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from portkey_ai import AsyncPortkey, Portkey
 from respan import Respan, propagate_attributes
 from respan_instrumentation_portkey import PortkeyInstrumentor
@@ -19,118 +20,120 @@ EXAMPLE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = EXAMPLE_DIR.parents[2]
 DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
 DEFAULT_MODEL = "gpt-4.1-nano"
-EXAMPLE_SET = "portkey"
 
 
-def load_root_env() -> None:
+def load_root_env():
     load_dotenv(REPO_ROOT / ".env", override=False)
-    if not os.getenv("RESPAN_API_KEY"):
-        raise RuntimeError(f"RESPAN_API_KEY is required in {REPO_ROOT / '.env'}")
 
 
-def marker() -> str:
-    return os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip() or (
-        f"portkey-{uuid4().hex[:10]}"
+def marker():
+    return (
+        os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip() or "portkey-" + uuid4().hex[:10]
     )
 
 
-def execution_id() -> str:
+def execution_id():
     return uuid4().hex[:10]
 
 
-def workflow_name(example_name: str) -> str:
-    return f"portkey_{example_name.replace('-', '_')}"
+def workflow_name(example_name):
+    return "portkey_" + example_name.replace("-", "_")
 
 
-def make_respan(example_name: str, run_marker: str) -> Respan:
-    load_root_env()
-    return Respan(
-        api_key=os.environ["RESPAN_API_KEY"],
-        base_url=os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL),
-        app_name=workflow_name(example_name),
-        instrumentations=[PortkeyInstrumentor()],
-        is_batching_enabled=False,
-        metadata={
-            "example_set": EXAMPLE_SET,
-            "workflow_name": workflow_name(example_name),
-            "example_run_id": run_marker,
-            "run_id": run_marker,
-        },
-        log_level=os.getenv("RESPAN_LOG_LEVEL", "WARNING"),
+def make_respan(example_name, run_marker, *, capture_content=True):
+    exporting = os.getenv("RESPAN_PORTKEY_EXPORT") == "1"
+    if exporting:
+        load_root_env()
+        if not os.getenv("RESPAN_API_KEY"):
+            raise RuntimeError("RESPAN_API_KEY required for explicit export")
+    previous = os.environ.pop("RESPAN_API_KEY", None) if not exporting else None
+    try:
+        respan = Respan(
+            api_key=os.getenv("RESPAN_API_KEY") if exporting else None,
+            base_url=os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL),
+            app_name=workflow_name(example_name),
+            instrumentations=[PortkeyInstrumentor(capture_content=capture_content)],
+            metadata={
+                "example_set": "portkey",
+                "run_id": run_marker,
+                "example_run_id": run_marker,
+                "workflow_name": workflow_name(example_name),
+            },
+            log_level="WARNING",
+        )
+    finally:
+        if previous is not None:
+            os.environ["RESPAN_API_KEY"] = previous
+    if not exporting:
+        respan.telemetry.add_processor(exporter=InMemorySpanExporter())
+    return respan
+
+
+def live_configured():
+    return os.getenv("RESPAN_PORTKEY_LIVE") == "1" and bool(
+        os.getenv("PORTKEY_API_KEY")
     )
 
 
-def live_configured() -> bool:
-    return bool(os.getenv("PORTKEY_API_KEY"))
-
-
-def _client_kwargs(*, live: bool) -> dict[str, object]:
-    load_root_env()
+def _client_kwargs(*, live, asynchronous=False):
     if live:
+        load_root_env()
         if not live_configured():
-            raise RuntimeError(
-                "PORTKEY_API_KEY is required for the optional live example"
-            )
-        kwargs: dict[str, object] = {"api_key": os.environ["PORTKEY_API_KEY"]}
-        if base_url := os.getenv("PORTKEY_BASE_URL"):
-            kwargs["base_url"] = base_url.rstrip("/")
-        if provider := os.getenv("PORTKEY_PROVIDER"):
-            kwargs["provider"] = provider
-        if config := os.getenv("PORTKEY_CONFIG"):
-            kwargs["config"] = config
+            raise RuntimeError("RESPAN_PORTKEY_LIVE=1 and PORTKEY_API_KEY required")
+        kwargs = {"api_key": os.environ["PORTKEY_API_KEY"]}
+        for env, key in [
+            ("PORTKEY_BASE_URL", "base_url"),
+            ("PORTKEY_PROVIDER", "provider"),
+            ("PORTKEY_CONFIG", "config"),
+        ]:
+            if os.getenv(env):
+                kwargs[key] = os.environ[env]
         return kwargs
+    url = "https://portkey.test"
+    cls = httpx.AsyncClient if asynchronous else httpx.Client
     return {
-        "api_key": "local-portkey-example-key",
-        "base_url": local_gateway_base_url(),
+        "api_key": "fixture",
+        "base_url": url,
+        "http_client": cls(base_url=url, transport=httpx.MockTransport(Transport())),
+        "max_retries": 0,
     }
 
 
-def make_client(*, live: bool = False) -> Portkey:
+def make_client(*, live=False):
     return Portkey(**_client_kwargs(live=live))
 
 
-def make_async_client(*, live: bool = False) -> AsyncPortkey:
-    return AsyncPortkey(**_client_kwargs(live=live))
+def make_async_client(*, live=False):
+    return AsyncPortkey(**_client_kwargs(live=live, asynchronous=True))
 
 
-def model_name(*, live: bool = False) -> str:
-    if live:
-        return os.getenv("PORTKEY_MODEL") or os.getenv("RESPAN_MODEL", DEFAULT_MODEL)
-    return "local-portkey-model"
+def model_name(*, live=False):
+    return os.getenv("PORTKEY_MODEL", DEFAULT_MODEL) if live else "fixture-model"
 
 
 @contextmanager
-def example_attributes(
-    example_name: str, run_marker: str, execution: str, *, mode: str
-):
-    current_workflow_name = workflow_name(example_name)
+def example_attributes(example_name, run_marker, execution, *, mode):
     with propagate_attributes(
-        custom_identifier=f"{current_workflow_name}-{execution}",
-        trace_group_identifier=current_workflow_name,
         metadata={
-            "example_set": EXAMPLE_SET,
+            "example_set": "portkey",
             "example": example_name,
-            "workflow_name": current_workflow_name,
-            "example_run_id": run_marker,
             "run_id": run_marker,
+            "example_run_id": run_marker,
             "execution_id": execution,
             "mode": mode,
         },
+        trace_group_identifier=workflow_name(example_name) + "-" + run_marker,
     ):
         yield
 
 
-def print_result(example_name: str, run_marker: str, result: Any) -> None:
-    print(f"RESPAN_EXAMPLE_RUN_ID={run_marker}")
-    print(f"\n== {example_name} ==")
-    print(json.dumps(result, allow_nan=False, indent=2, sort_keys=True))
+def print_result(example_name, run_marker, result):
+    print("RESPAN_EXAMPLE_RUN_ID=" + run_marker)
+    print(example_name + ": " + json.dumps(result, allow_nan=False))
 
 
-def finish_respan(respan: Respan) -> None:
+def finish_respan(respan):
     try:
         respan.flush()
     finally:
-        try:
-            respan.shutdown()
-        finally:
-            shutdown_local_gateway()
+        respan.shutdown()
