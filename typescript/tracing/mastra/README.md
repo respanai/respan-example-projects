@@ -1,33 +1,26 @@
-# Mastra + Respan Tracing Examples
+# Mastra tracing examples
 
-Runnable Mastra TypeScript examples using `@respan/instrumentation-mastra`.
-
-## Setup
-
-These examples load environment variables from the repository root `.env` file.
+Run released Mastra agents, tools, streams, workflows, native payload fidelity, and privacy scenarios through `@respan/instrumentation-mastra`.
 
 ```bash
 cd typescript/tracing/mastra
-npm install
+npm ci
+npm run typecheck
 npm run examples
 ```
 
-Required root `.env` values:
+Node.js 22.13 or later is required. The target adapter is installed from the sibling `respan` checkout; build that package first. Other Respan packages come from their public releases. `.npmrc` copies the local package into `node_modules` during installation.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `RESPAN_API_KEY` | Yes | Used for Respan tracing and the Respan gateway. |
-| `RESPAN_BASE_URL` | No | Defaults to `https://api.respan.ai/api`. |
-| `MASTRA_EXAMPLE_MODEL` | No | Defaults to `gpt-4.1-nano` through the OpenAI-compatible gateway. |
-| `RESPAN_EXAMPLE_RUN_ID` | No | Custom run id used in metadata and console output. |
+The default run uses Mastra's official deterministic model and an in-memory exporter. It needs no credentials and makes no provider or Respan requests.
 
-The examples set `OPENAI_API_KEY` from `RESPAN_API_KEY` and `OPENAI_BASE_URL` from `RESPAN_BASE_URL`, so no separate provider key is required.
+- `example:basic`: native agent generation.
+- `example:tool`: native agent tool execution with a JSON schema.
+- `example:stream`: native agent streaming.
+- `example:failure`: controlled native provider failure in a workflow.
+- `example:workflow`: native workflow and step execution.
+- `example:fidelity`: 80 messages, an 80-field tool schema, structured output, and a 5,003-dimensional embedding payload.
+- `example:privacy`: a context-local content veto retained after the context exits.
 
-## Scripts
+To export the controlled scenarios, set `RESPAN_EXPORT=1` and provide `RESPAN_API_KEY`. `RESPAN_BASE_URL` optionally selects the Respan endpoint. Environment values may be loaded from the repository root `.env`. `RESPAN_EXAMPLE_RUN_ID` supplies a unique correlation marker; `MASTRA_CAPTURE_PATH` writes the converted local spans for scoped inspection. Credentials are never included in example output.
 
-- `npm run example:basic` - simple agent generation.
-- `npm run example:tool` - agent with a local weather tool.
-- `npm run example:stream` - streaming agent response.
-- `npm run examples` - run the complete set.
-
-Each script emits a readable workflow name such as `Mastra Tool Example.workflow`, sets the same value as `trace_group_identifier`, and includes the run id in metadata so traces are easy to find in Respan.
+The example profile pins core 1.75.0 and observability 1.18.4. The adapter's native test suite also covers its declared core 1.36.0 / observability 1.13.0 minimum. Full schemas depend on the native events actually exposing `attributes.tools`; older SDK events may include names only. Mastra's serializer removes data before exporters run, so the fidelity fixture explicitly requests larger native serialization limits.

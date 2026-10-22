@@ -1,4 +1,9 @@
-import { createAgent, logExampleResult, resultText, runStrandsExample } from "./_shared.js";
+import {
+  createAgent,
+  logExampleResult,
+  resultText,
+  runStrandsExample,
+} from "./_shared.js";
 
 const workflowName = "Strands Agents TS Streaming.workflow";
 const result = await runStrandsExample({
@@ -6,7 +11,9 @@ const result = await runStrandsExample({
   workflowName,
   fn: async () => {
     const agent = createAgent("streaming");
-    const stream = agent.stream("Stream a short response with chunked model output.");
+    const stream = agent.stream(
+      "Stream a short response with chunked model output.",
+    );
     let eventCount = 0;
     let finalResult;
     while (true) {

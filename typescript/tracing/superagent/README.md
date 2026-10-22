@@ -1,41 +1,50 @@
-# Superagent + Respan Examples (TypeScript)
+# Superagent + Respan TypeScript examples
 
-Runnable examples for tracing Superagent `safety-agent` guardrail, redaction,
-and scan operations with Respan.
+These examples use released `safety-agent` 0.1.7 and the local Superagent instrumentation package. Companion Respan packages come from npm. Node.js 24 is used for validation.
 
-These examples load environment variables from the repository root `.env` file.
+## Setup and run
 
-## Setup
-
-```bash
-cd typescript/tracing/superagent
-npm install
-```
-
-Required root `.env` value:
-
-| Variable | Required | Description |
-| --- | --- | --- |
-| `RESPAN_API_KEY` | Yes | Respan API key for trace export. |
-| `RESPAN_BASE_URL` | No | Defaults to Respan production API. |
-| `RESPAN_GATEWAY_API_KEY` | No | Defaults to `RESPAN_API_KEY` for OpenAI-compatible Superagent provider calls. |
-| `RESPAN_GATEWAY_BASE_URL` | No | Defaults to `RESPAN_BASE_URL`. |
-| `SUPERAGENT_API_KEY` | No | Defaults to a local example value for SDK usage tracking. |
-| `SUPERAGENT_MODEL` | No | Defaults to `RESPAN_MODEL` or `openai-compatible/gpt-4o-mini`. |
-| `RESPAN_EXAMPLE_RUN_ID` | No | Optional run id for exact trace lookup. |
-| `DAYTONA_API_KEY` | No | Required only for the live repository scan example. |
-
-## Run
+Build the instrumentation in the sibling `respan` checkout first, then install the example as a normal npm consumer:
 
 ```bash
+cd ../respan/javascript-sdks
+yarn install --immutable
+yarn workspace @respan/instrumentation-superagent build
+cd ../../respan-example-projects/typescript/tracing/superagent
+npm ci
+npm run typecheck
 npm run all
 ```
 
-Individual scripts:
+By default, native SDK calls use controlled provider HTTP responses and a controlled Daytona HTTP adapter. No model provider requests, sandbox creation, or trace exports leave the process. `ws` supplies the peer required by Daytona's native transport.
 
-- `01_guard.ts`: classify prompt-injection style input with `guard()`.
-- `02_redact.ts`: redact email and phone data with `redact()`.
-- `03_workflow.ts`: run `guard()` and `redact()` inside nested Respan workflow/task spans.
-- `04_scan.ts`: run `scan()` when Daytona credentials are available; otherwise emit a skipped workflow result.
+| Script                 | Native behavior                                                             |
+| ---------------------- | --------------------------------------------------------------------------- |
+| `01_guard.ts`          | Chunked guard calls, with one model span per native provider transformation |
+| `02_redact.ts`         | Redaction, entities, and `rewrite: false`                                   |
+| `03_workflow.ts`       | Guard and redact beneath Respan workflow/task parents                       |
+| `04_scan.ts`           | Actual Daytona scan lifecycle, report parsing, and sandbox cleanup          |
+| `05_fallback.ts`       | Version 0.1.7 fallback request after a controlled provider failure          |
+| `06_privacy.ts`        | Canonical context content veto with unchanged native result                 |
+| `07_provider_error.ts` | Original native error identity and failed spans                             |
+| `08_large_payload.ts`  | Complete long input, 5001 values, and false/zero/empty/null                 |
 
-Each script prints a workflow name and run id that can be used to find the trace in Respan.
+Each script prints only its run marker and counts. Set `SUPERAGENT_CAPTURE_DIR` to save the controlled canonical spans locally.
+
+## Export controlled traces
+
+Place `RESPAN_API_KEY` in the repository root `.env` and enable export explicitly:
+
+```bash
+RESPAN_EXAMPLE_EXPORT=1 RESPAN_EXAMPLE_RUN_ID=my-superagent-run npm run all
+```
+
+`RESPAN_BASE_URL` optionally selects the trace endpoint. Provider calls remain controlled unless live mode is also enabled.
+
+## Live provider calls
+
+`SUPERAGENT_EXAMPLE_PROVIDER=live` enables real provider calls. Set `SUPERAGENT_API_KEY`, the provider's native key such as `OPENAI_API_KEY`, and `SUPERAGENT_MODEL` (for example `openai/gpt-4o-mini`). Run an individual applicable script. The controlled fallback, error, and payload assertions are fixture scenarios. A live scan additionally requires `DAYTONA_API_KEY` and `SUPERAGENT_SCAN_REPO`; it creates and deletes a remote sandbox.
+
+Scan spans contain the native scan result. Remote model requests inside Daytona are not observable through this SDK, so the instrumentation does not invent child model spans. Failed attempts have no fabricated completion or HTTP status. The minimum supported 0.1.6 predates the explicit `fallbackModel` option.
+
+The SDK may retry a timed-out HTTP request with a reused transformed body. Such transport retries do not expose another provider transformation, so this adapter cannot distinguish them as separate model spans. Explicit `fallbackModel` calls do expose distinct transformations and are covered.

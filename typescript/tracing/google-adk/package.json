@@ -7,21 +7,26 @@
     "01:hello": "tsx 01_hello_world.ts",
     "02:tool": "tsx 02_tool_use.ts",
     "03:streaming": "tsx 03_streaming_attributes.ts",
-    "all": "npm run 01:hello && npm run 02:tool && npm run 03:streaming",
-    "typecheck": "tsc --noEmit"
+    "all": "npm run 01:hello && npm run 02:tool && npm run 03:streaming && npm run 04:graph && npm run 05:privacy && npm run 06:error",
+    "typecheck": "tsc --noEmit",
+    "04:graph": "tsx 04_graph_workflow.ts",
+    "05:privacy": "tsx 05_privacy_and_errors.ts",
+    "06:error": "tsx 05_privacy_and_errors.ts error"
   },
   "dependencies": {
-    "@google/adk": "^1.2.0",
+    "@google/adk": "2.2.1",
     "@respan/instrumentation-google-adk": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-google-adk",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^17.2.3",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.3",
-    "zod": "^4.1.13"
+    "@respan/tracing": "1.6.1",
+    "@respan/respan-sdk": "1.3.4",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/sdk-trace-base": "2.12.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.223.0",
+    "dotenv": "17.2.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "zod": "4.2.1"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1"
+    "@types/node": "24.10.0"
   }
 }

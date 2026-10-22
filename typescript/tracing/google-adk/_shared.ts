@@ -1,229 +1,193 @@
-import type {
-  BaseLlmConnection,
-  Event,
-  LlmRequest,
-  LlmResponse,
-  RunConfig,
-} from "@google/adk";
+import type { Event, RunConfig } from "@google/adk";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
+import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { GoogleADKInstrumentor } from "@respan/instrumentation-google-adk";
-import { Respan } from "@respan/respan";
+import { propagateAttributes, RespanTelemetry } from "@respan/tracing";
 import dotenv from "dotenv";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
 
-const DEFAULT_BASE_URL = "https://api.respan.ai/api";
-
-type GoogleADKModule = typeof import("@google/adk");
-type LlmAgentInstance = InstanceType<GoogleADKModule["LlmAgent"]>;
-
 export const EXAMPLE_RUN_ID =
   process.env.RESPAN_EXAMPLE_RUN_ID ?? `google-adk-ts-${Date.now()}`;
+export type DemoMode =
+  "hello" | "tool" | "stream" | "graph" | "privacy" | "error";
 
-let googleADKModulePromise: Promise<GoogleADKModule> | undefined;
-let rootEnvLoaded = false;
-let respanLogsSuppressed = false;
-const originalConsoleDebug = console.debug.bind(console);
-const originalConsoleInfo = console.info.bind(console);
-const originalConsoleLog = console.log.bind(console);
-
-export function loadRootEnv(): void {
-  if (rootEnvLoaded) {
-    return;
-  }
-
-  const startDir = dirname(fileURLToPath(import.meta.url));
-  let currentDir = startDir;
-
+function loadEnv(): void {
+  let directory = dirname(fileURLToPath(import.meta.url));
   for (let depth = 0; depth < 8; depth += 1) {
-    const envPath = join(currentDir, ".env");
-    if (existsSync(envPath)) {
-      dotenv.config({ path: envPath, override: false, quiet: true });
-      rootEnvLoaded = true;
+    const candidate = join(directory, ".env");
+    if (existsSync(candidate)) {
+      dotenv.config({ path: candidate, quiet: true });
       return;
     }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) {
-      break;
-    }
-    currentDir = parentDir;
+    directory = dirname(directory);
   }
-
-  dotenv.config({ override: false, quiet: true });
-  rootEnvLoaded = true;
 }
 
-export function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required. Add it to respan-example-projects/.env.`);
-  }
-  return value;
-}
-
-function suppressExampleRespanLogs(): void {
-  if (respanLogsSuppressed || process.env.RESPAN_EXAMPLE_DEBUG === "true") {
-    return;
-  }
-
-  console.debug = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("[Respan Debug]")) {
-      return;
-    }
-    originalConsoleDebug(...args);
+function createExporter(workflowName: string): SpanExporter {
+  const memory = new InMemorySpanExporter();
+  if (process.env.RESPAN_EXAMPLE_EXPORT !== "1") return memory;
+  if (!process.env.RESPAN_API_KEY)
+    throw new Error("RESPAN_EXAMPLE_EXPORT=1 requires RESPAN_API_KEY.");
+  const base = (process.env.RESPAN_BASE_URL ?? "https://api.respan.ai")
+    .replace(/\/api\/?$/, "")
+    .replace(/\/$/, "");
+  const remote = new OTLPTraceExporter({
+    url: process.env.RESPAN_EXAMPLE_TRACE_URL ?? `${base}/api/v2/traces`,
+    headers: { Authorization: `Bearer ${process.env.RESPAN_API_KEY}` },
+  });
+  return {
+    export(spans, callback) {
+      const captured = spans.map((span) => ({
+        workflowName,
+        runId: EXAMPLE_RUN_ID,
+        name: span.name,
+        traceId: span.spanContext().traceId,
+        spanId: span.spanContext().spanId,
+        parentSpanId: span.parentSpanContext?.spanId,
+        attributes: span.attributes,
+        status: span.status,
+      }));
+      if (process.env.RESPAN_CAPTURE_FILE)
+        appendFileSync(
+          process.env.RESPAN_CAPTURE_FILE,
+          JSON.stringify({ type: "spans", spans: captured }) + "\n",
+        );
+      remote.export(spans, (receipt) => {
+        if (process.env.RESPAN_CAPTURE_FILE)
+          appendFileSync(
+            process.env.RESPAN_CAPTURE_FILE,
+            JSON.stringify({
+              type: "receipt",
+              workflowName,
+              runId: EXAMPLE_RUN_ID,
+              code: receipt.code,
+              spanIds: captured.map((span) => span.spanId),
+            }) + "\n",
+          );
+        callback(receipt);
+      });
+    },
+    forceFlush: () => remote.forceFlush(),
+    shutdown: () => remote.shutdown(),
   };
-
-  console.info = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]")) {
-      return;
-    }
-    originalConsoleInfo(...args);
-  };
-
-  console.log = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("Respan tracing")) {
-      return;
-    }
-    originalConsoleLog(...args);
-  };
-
-  respanLogsSuppressed = true;
 }
 
-async function loadGoogleADK(): Promise<GoogleADKModule> {
-  googleADKModulePromise ??= import("@google/adk");
-  return googleADKModulePromise;
-}
-
-export type DemoMode = "hello" | "tool" | "stream";
-
-function createDeterministicLlm(adk: GoogleADKModule, mode: DemoMode) {
-  class DeterministicADKLlm extends adk.BaseLlm {
-    constructor() {
-      super({ model: `respan-demo-${mode}-model` });
-    }
-
-    async *generateContentAsync(
-      llmRequest: LlmRequest,
-      stream = false,
-      _abortSignal?: AbortSignal,
-    ): AsyncGenerator<LlmResponse, void> {
-      const hasToolResponse = llmRequest.contents.some((content) =>
-        content.parts?.some((part) => part.functionResponse),
+function installTransport(mode: DemoMode): () => void {
+  if (process.env.GOOGLE_ADK_LIVE === "1" && mode !== "error") return () => {};
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input, options) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (!url.startsWith("https://generativelanguage.googleapis.com/"))
+      throw new Error(`Unexpected controlled provider transport: ${url}`);
+    const request = JSON.parse(String(options?.body ?? "{}"));
+    if (mode === "error")
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 429,
+            status: "RESOURCE_EXHAUSTED",
+            message: "Controlled ADK provider failure",
+          },
+        }),
+        { status: 429, headers: { "content-type": "application/json" } },
       );
-
-      if (mode === "tool" && !hasToolResponse) {
-        yield {
-          content: {
-            role: "model",
-            parts: [
-              {
-                functionCall: {
-                  name: "get_weather",
-                  args: { city: "Tokyo" },
-                },
+    const hasResult = request.contents?.some(
+      (content: { parts?: Array<{ functionResponse?: unknown }> }) =>
+        content.parts?.some((part) => part.functionResponse),
+    );
+    const parts =
+      mode === "tool" && !hasResult
+        ? [
+            {
+              functionCall: {
+                id: "example_weather_call_tokyo",
+                name: "get_weather",
+                args: { city: "Tokyo" },
               },
-            ],
-          },
-          usageMetadata: {
-            promptTokenCount: 18,
-            candidatesTokenCount: 4,
-            totalTokenCount: 22,
-          },
-        };
-        return;
-      }
-
-      if (stream) {
-        yield {
-          content: { role: "model", parts: [{ text: "Streaming " }] },
-          partial: true,
-        };
-        yield {
-          content: { role: "model", parts: [{ text: "ADK telemetry " }] },
-          partial: true,
-        };
-      }
-
-      yield {
-        content: {
-          role: "model",
-          parts: [{ text: finalText(llmRequest) }],
-        },
-        usageMetadata: {
-          promptTokenCount: mode === "tool" ? 28 : 14,
-          candidatesTokenCount: mode === "tool" ? 9 : 7,
-          totalTokenCount: mode === "tool" ? 37 : 21,
-        },
-      };
-    }
-
-    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-      throw new Error("Live connections are not used by these examples.");
-    }
-  }
-
-  function finalText(llmRequest: LlmRequest): string {
-    if (mode === "tool") {
-      const toolResponse = llmRequest.contents
-        .flatMap((content) => content.parts ?? [])
-        .map((part) => part.functionResponse?.response)
-        .find((response) => response !== undefined);
-      const forecast = isRecord(toolResponse) && typeof toolResponse.forecast === "string"
-        ? toolResponse.forecast
-        : "available";
-      return `The Tokyo forecast is ${forecast}.`;
-    }
-
-    if (mode === "stream") {
-      return "complete with propagated Respan attributes.";
-    }
-
-    return "Hello from Google ADK TypeScript instrumentation.";
-  }
-
-  return new DeterministicADKLlm();
-}
-
-function createWeatherTool(adk: GoogleADKModule) {
-  return new adk.FunctionTool({
-    name: "get_weather",
-    description: "Return a short deterministic weather forecast.",
-    parameters: z.object({
-      city: z.string().describe("City name"),
-    }),
-    execute: ({ city }) => ({
-      city,
-      forecast: city === "Tokyo" ? "sunny with light wind" : "clear",
-    }),
-  });
-}
-
-function createAgent(adk: GoogleADKModule, mode: DemoMode): LlmAgentInstance {
-  return new adk.LlmAgent({
-    name: `${mode}_agent`,
-    description: `Deterministic ${mode} Google ADK demo agent`,
-    model: createDeterministicLlm(adk, mode),
-    instruction: "Use concise responses. Call tools when needed.",
-    tools: mode === "tool" ? [createWeatherTool(adk)] : [],
-  });
-}
-
-export function createRespan(appName: string): Respan {
-  loadRootEnv();
-  suppressExampleRespanLogs();
-
-  return new Respan({
-    apiKey: requireEnv("RESPAN_API_KEY"),
-    baseURL: process.env.RESPAN_BASE_URL ?? DEFAULT_BASE_URL,
-    appName,
-    instrumentations: [new GoogleADKInstrumentor()],
-    silenceInitializationMessage: true,
-  });
+            },
+            {
+              functionCall: {
+                id: "example_weather_call_paris",
+                name: "get_weather",
+                args: { city: "Paris" },
+              },
+            },
+          ]
+        : [
+            {
+              text:
+                mode === "tool"
+                  ? "Tokyo is sunny with light wind; Paris is cloudy."
+                  : "Hello from native Google ADK TypeScript.",
+            },
+          ];
+    const usageMetadata = {
+      promptTokenCount: 14,
+      candidatesTokenCount: 7,
+      thoughtsTokenCount: 2,
+      totalTokenCount: 23,
+    };
+    const frames =
+      mode === "stream"
+        ? [
+            {
+              candidates: [
+                {
+                  index: 0,
+                  content: {
+                    role: "model",
+                    parts: [{ text: "Streaming ADK " }],
+                  },
+                },
+              ],
+            },
+            {
+              candidates: [
+                {
+                  index: 0,
+                  content: {
+                    role: "model",
+                    parts: [{ text: "telemetry complete." }],
+                  },
+                  finishReason: "STOP",
+                },
+              ],
+            },
+            { usageMetadata },
+          ]
+        : [
+            {
+              candidates: [
+                {
+                  index: 0,
+                  content: { role: "model", parts },
+                  finishReason: "STOP",
+                },
+              ],
+              usageMetadata,
+            },
+          ];
+    return mode === "stream"
+      ? new Response(
+          frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        )
+      : new Response(JSON.stringify(frames[0]), {
+          headers: { "content-type": "application/json" },
+        });
+  };
+  return () => {
+    globalThis.fetch = original;
+  };
 }
 
 export async function runADKExample(params: {
@@ -233,69 +197,144 @@ export async function runADKExample(params: {
   prompt: string;
   runConfig?: RunConfig;
   streaming?: boolean;
-}): Promise<{ events: Event[]; output: string; respan: Respan }> {
-  const respan = createRespan(params.appName);
-  const events: Event[] = [];
-  let output = "";
-
+}): Promise<{ events: Event[]; output: string; respan: RespanTelemetry }> {
+  loadEnv();
+  const exporter = createExporter(params.workflowName);
+  const previousMetricsExporter = process.env.OTEL_METRICS_EXPORTER;
+  process.env.OTEL_METRICS_EXPORTER = "none";
+  const respan = new RespanTelemetry({
+    appName: params.appName,
+    apiKey: "local-controlled-example",
+    exporter,
+    disableBatch: true,
+    silenceInitializationMessage: true,
+    disabledInstrumentations: [
+      "http",
+      "openAI",
+      "anthropic",
+      "azureOpenAI",
+      "cohere",
+      "bedrock",
+      "googleVertexAI",
+      "googleAIPlatform",
+      "pinecone",
+      "together",
+      "langChain",
+      "llamaIndex",
+      "chromaDB",
+      "qdrant",
+    ],
+  });
   await respan.initialize();
+  const instrumentor = new GoogleADKInstrumentor({
+    traceContent: params.mode !== "privacy",
+  });
+  instrumentor.activate();
+  const restore = installTransport(params.mode);
+  const events: Event[] = [];
   try {
-    const adk = await loadGoogleADK();
-    const runner = new adk.InMemoryRunner({
-      appName: params.appName,
-      agent: createAgent(adk, params.mode),
+    const adk = await import("@google/adk");
+    const tool = new adk.FunctionTool({
+      name: "get_weather",
+      description: "Return a deterministic local forecast.",
+      parameters: z.object({ city: z.string() }),
+      execute: ({ city }) => ({
+        city,
+        forecast: city === "Paris" ? "cloudy" : "sunny with light wind",
+      }),
     });
-    const runConfig = params.runConfig ?? (params.streaming
-      ? { streamingMode: adk.StreamingMode.SSE }
-      : undefined);
-
-    await respan.propagateAttributes(
+    const agent =
+      params.mode === "graph"
+        ? new adk.Workflow({
+            name: "forecast_workflow",
+            edges: [
+              [
+                "START",
+                new adk.FunctionNode("format_forecast", () => ({
+                  forecast: "sunny",
+                  city: "Tokyo",
+                })),
+              ],
+            ],
+          })
+        : new adk.LlmAgent({
+            name: `${params.mode}_agent`,
+            model: new adk.Gemini({
+              model: "gemini-2.5-flash",
+              apiKey:
+                process.env.GOOGLE_ADK_LIVE === "1" && params.mode !== "error"
+                  ? process.env.GOOGLE_GENAI_API_KEY
+                  : "controlled-local-provider",
+            }),
+            instruction: "Answer concisely. Use tools when needed.",
+            tools: params.mode === "tool" ? [tool] : [],
+          });
+    const runner = new adk.InMemoryRunner({ appName: params.appName, agent });
+    await propagateAttributes(
       {
         custom_identifier: EXAMPLE_RUN_ID,
-        thread_identifier: `google-adk-ts-thread-${EXAMPLE_RUN_ID}`,
-        trace_group_identifier: params.workflowName,
         metadata: {
-          example: "google-adk-typescript",
           run_id: EXAMPLE_RUN_ID,
+          profile: process.env.RESPAN_EXAMPLE_PROFILE ?? "current",
+          source_frozen_hash: process.env.RESPAN_EXAMPLE_SOURCE_HASH ?? "local",
           workflow_name: params.workflowName,
+          example: "google-adk-typescript",
         },
       },
       async () => {
         await respan.withWorkflow({ name: params.workflowName }, async () => {
           for await (const event of runner.runEphemeral({
-            userId: "respan-example-user",
-            newMessage: {
-              role: "user",
-              parts: [{ text: params.prompt }],
-            },
-            runConfig,
-          })) {
+            userId: "example-user",
+            newMessage: { role: "user", parts: [{ text: params.prompt }] },
+            runConfig:
+              params.runConfig ??
+              (params.streaming
+                ? { streamingMode: adk.StreamingMode.SSE }
+                : undefined),
+          }))
             events.push(event);
-            output += stringifyEventText(event);
-          }
         });
       },
     );
+    await respan.flush();
+    const localSpans: ReadableSpan[] =
+      exporter instanceof InMemorySpanExporter
+        ? exporter.getFinishedSpans()
+        : [];
+    if (
+      params.mode === "privacy" &&
+      JSON.stringify(localSpans.map((span) => span.attributes)).includes(
+        params.prompt,
+      )
+    )
+      throw new Error("Privacy example exported prompt content.");
+    if (params.mode === "error" && !events.some((event) => event.errorCode))
+      throw new Error("Expected native ADK error event.");
+    const output = events
+      .filter((event) => !event.partial)
+      .flatMap((event) => event.content?.parts ?? [])
+      .map((part) => part.text ?? "")
+      .join("");
+    return { events, output, respan };
   } finally {
+    restore();
+    instrumentor.deactivate();
+    await respan.shutdown();
+    if (previousMetricsExporter === undefined)
+      delete process.env.OTEL_METRICS_EXPORTER;
+    else process.env.OTEL_METRICS_EXPORTER = previousMetricsExporter;
   }
-
-  return { events, output, respan };
 }
 
 export function logExampleResult(
   workflowName: string,
   details: Record<string, unknown>,
 ): void {
-  console.log(JSON.stringify({ workflowName, runId: EXAMPLE_RUN_ID, ...details }, null, 2));
-}
-
-function stringifyEventText(event: Event): string {
-  return (event.content?.parts ?? [])
-    .map((part) => part.text ?? "")
-    .filter(Boolean)
-    .join("");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  console.log(
+    JSON.stringify(
+      { workflowName, runId: EXAMPLE_RUN_ID, ...details },
+      null,
+      2,
+    ),
+  );
 }
