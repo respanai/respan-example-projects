@@ -2,10 +2,9 @@
 
 from collections.abc import Generator
 
+from _shared import create_respan, new_run_id, print_trace_lookup, workflow_context
 from burr.core import ApplicationBuilder, State
 from burr.core.action import streaming_action
-
-from _shared import create_respan, new_run_id, print_trace_lookup, workflow_context
 
 WORKFLOW_NAME = "Burr Streaming Workflow"
 EXAMPLE_NAME = "04_streaming_workflow"
@@ -29,7 +28,9 @@ def main() -> None:
     )
     app = (
         ApplicationBuilder()
-        .with_identifiers(app_id="streaming-app", partition_key="user-stream")
+        .with_identifiers(
+            app_id=f"{run_id}:{EXAMPLE_NAME}", partition_key="user-stream"
+        )
         .with_actions(stream_response)
         .with_entrypoint("stream_response")
         .with_state(prompt="Return a deterministic streaming response")

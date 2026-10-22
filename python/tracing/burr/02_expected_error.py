@@ -1,8 +1,7 @@
 """Trace a deterministic Burr action and application failure."""
 
-from burr.core import ApplicationBuilder, State, action
-
 from _shared import create_respan, new_run_id, print_trace_lookup, workflow_context
+from burr.core import ApplicationBuilder, State, action
 
 WORKFLOW_NAME = "Burr Expected Error Workflow"
 EXAMPLE_NAME = "02_expected_error"
@@ -23,7 +22,7 @@ def main() -> None:
     )
     app = (
         ApplicationBuilder()
-        .with_identifiers(app_id="expected-error-app", partition_key="user-error")
+        .with_identifiers(app_id=f"{run_id}:{EXAMPLE_NAME}", partition_key="user-error")
         .with_actions(fail_deterministically)
         .with_entrypoint("fail_deterministically")
         .with_state(count=0)

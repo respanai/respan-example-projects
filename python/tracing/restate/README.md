@@ -1,16 +1,19 @@
-# Restate tracing examples
+# Restate Python tracing examples
 
-These examples register real Restate 1.x workflow and service handlers and
-exercise their configured invocation context managers with a deterministic
-in-process invocation fixture. This validates instrumentation mapping without
-requiring a deployed Restate runtime or protocol VM.
+Install `requirements.txt`, then run `python run_all.py`. The default runs local
+controlled fixtures and needs no credentials or Restate deployment. Each fixture
+uses real Restate registration, `ServerInvocationContext`, native contextvars,
+serde, and `invoke_handler`. It does not simulate durable journal execution or
+claim a production replay test.
 
-A true replay/deployment validation still requires an external Restate server;
-that service boundary is intentionally not replaced by package behavior.
+The runner covers workflow and service success, native errors, VirtualObject
+registration with replay-attempt context and caller cleanup, custom serde with
+privacy disabled, and a terminal error carrying its real status code. Native
+results are checked independently from the attempt spans. The context-manager
+hook cannot observe handler response bodies, so the adapter omits them.
 
-```bash
-RESPAN_EXAMPLE_RUN_ID=otel2-restate-check python run_all.py
-```
-
-The runner preserves the supplied marker, times out each child independently,
-continues after failures, and exits nonzero if any example fails.
+Set `RESPAN_EXAMPLE_EXPORT=1` to explicitly export the controlled traces using
+`RESPAN_API_KEY` from the repository `.env`. `RESPAN_EXAMPLE_RUN_ID` scopes the
+run, and `RESPAN_EXAMPLE_REPORT_DIR` saves local OTLP span bodies for comparison.
+The exporter uses `https://api.respan.ai/api/v2/traces`. These examples make no
+production service calls; there is no implicit live mode.

@@ -59,3 +59,17 @@ class ApprovalWorkflow:
     @workflow.query
     def status(self) -> str:
         return "approved" if self._approved else "pending"
+
+
+@activity.defn
+async def echo_payload(value: dict) -> dict:
+    return value
+
+
+@workflow.defn
+class PayloadWorkflow:
+    @workflow.run
+    async def run(self, value: dict) -> dict:
+        return await workflow.execute_activity(
+            echo_payload, value, start_to_close_timeout=timedelta(seconds=10)
+        )

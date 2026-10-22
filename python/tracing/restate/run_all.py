@@ -7,7 +7,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-SCRIPTS = ["01_workflow_success.py", "02_service_success.py", "03_expected_error.py"]
+SCRIPTS = [
+    "01_workflow_success.py",
+    "02_service_success.py",
+    "03_expected_error.py",
+    "04_object_replay_context.py",
+    "05_custom_serde_privacy.py",
+    "06_terminal_error.py",
+]
 TIMEOUT_SECONDS = 120
 
 

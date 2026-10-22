@@ -1,4 +1,6 @@
 python-dotenv>=1.0.1
-respan-ai>=4,<5
+respan-ai>=4.1,<5
+respan-tracing>=2.17,<3
+respan-sdk>=2.6.26,<3
 respan-instrumentation-temporal>=0.1,<1
-temporalio>=1.31,<2
+temporalio>=1.30,<2

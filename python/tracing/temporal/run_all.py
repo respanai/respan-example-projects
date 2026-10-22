@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -40,4 +41,20 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="Send synthetic spans to Respan using .env credentials",
+    )
+    parser.add_argument(
+        "--remote-address",
+        help="Use this explicitly supplied Temporal server instead of the ephemeral local server",
+    )
+    args = parser.parse_args()
+    if args.export:
+        os.environ["RESPAN_EXAMPLE_EXPORT"] = "1"
+    if args.remote_address:
+        os.environ["TEMPORAL_EXAMPLE_REMOTE"] = "1"
+        os.environ["TEMPORAL_ADDRESS"] = args.remote_address
     raise SystemExit(main())

@@ -1,8 +1,7 @@
 """Trace a deterministic successful Burr state machine."""
 
-from burr.core import ApplicationBuilder, Result, State, action, default, expr
-
 from _shared import create_respan, new_run_id, print_trace_lookup, workflow_context
+from burr.core import ApplicationBuilder, Result, State, action, default, expr
 
 WORKFLOW_NAME = "Burr Counter Workflow"
 EXAMPLE_NAME = "01_counter_workflow"
@@ -23,7 +22,7 @@ def main() -> None:
     result = Result("count").with_name("result")
     app = (
         ApplicationBuilder()
-        .with_identifiers(app_id="counter-app", partition_key="user-42")
+        .with_identifiers(app_id=f"{run_id}:{EXAMPLE_NAME}", partition_key="user-42")
         .with_actions(increment, result)
         .with_transitions(("increment", "increment", expr("count < 2")))
         .with_transitions(("increment", "result", default))

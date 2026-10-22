@@ -2,19 +2,22 @@
 
 import asyncio
 
-from _shared import create_respan, finish_respan, marker, temporal_id
+from _shared import (
+    create_environment,
+    create_respan,
+    finish_respan,
+    marker,
+    temporal_id,
+)
 from _workflows import ApprovalWorkflow
 from respan import propagate_attributes
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
 
 async def main() -> None:
     respan, instrumentor = create_respan("signal-query-replay")
     try:
-        async with await WorkflowEnvironment.start_time_skipping(
-            interceptors=[instrumentor.interceptor]
-        ) as environment:
+        async with await create_environment(instrumentor) as environment:
             async with Worker(
                 environment.client,
                 task_queue="respan-temporal-signal",
@@ -42,6 +45,8 @@ async def main() -> None:
             await Replayer(
                 workflows=[ApprovalWorkflow], interceptors=[instrumentor.interceptor]
             ).replay_workflow(history)
+            assert before == "pending"
+            assert result == "approved:trace-release"
             print({"before": before, "result": result, "replayed": True})
     finally:
         finish_respan(respan)

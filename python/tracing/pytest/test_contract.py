@@ -1,30 +1,40 @@
-from __future__ import annotations
+"""Check real runner reports instead of source spelling."""
 
-import ast
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
 
-
-def test_runner_preserves_one_marker_and_aggregates_results() -> None:
-    source = (ROOT / "run_all.py").read_text(encoding="utf-8")
-    assert "override=False" in source
-    assert "RESPAN_EXAMPLE_RUN_ID" in source
-    assert "check=False" in source
-    assert "TimeoutExpired" in source
-    assert source.count("RESPAN_PYTEST_WORKFLOW_NAME") == 1
-
-
-def test_scenario_files_are_bounded_and_parse() -> None:
-    for path in sorted((ROOT / "scenarios").glob("*_case.py")):
-        source = path.read_text(encoding="utf-8")
-        ast.parse(source)
-        assert len(source.encode("utf-8")) < 4_000
-
-
-def test_privacy_scenario_uses_capture_disabled() -> None:
-    runner = (ROOT / "run_all.py").read_text(encoding="utf-8")
-    assert "--no-respan-capture-content" in runner
-    assert "pytest-secret-must-not-export" in (
-        ROOT / "scenarios/privacy_case.py"
-    ).read_text(encoding="utf-8")
+def test_native_plugin_scenarios(tmp_path):
+    root = Path(__file__).resolve().parent
+    env = {
+        **os.environ,
+        "RESPAN_EXAMPLE_EXPORT": "0",
+        "RESPAN_EXAMPLE_REPORT_DIR": str(tmp_path),
+        "RESPAN_EXAMPLE_RUN_ID": "pytest-contract",
+    }
+    completed = subprocess.run(
+        [sys.executable, str(root / "run_all.py")],
+        env=env,
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    reports = [json.loads(p.read_text()) for p in tmp_path.glob("*.json")]
+    assert {r["scenario"] for r in reports} == {
+        "outcomes",
+        "expected-failure",
+        "privacy",
+        "async",
+        "phases",
+        "collection",
+        "interruption",
+        "workers",
+    }
+    assert len([r for r in reports if r["scenario"] == "workers"]) == 3
+    assert all(r["span_count"] for r in reports)

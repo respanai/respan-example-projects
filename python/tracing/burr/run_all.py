@@ -15,6 +15,10 @@ EXAMPLES = (
     "03_custom_span_workflow.py",
     "04_streaming_workflow.py",
     "05_async_workflow.py",
+    "06_state_schema_and_arguments.py",
+    "07_private_error.py",
+    "08_async_stream_and_builder.py",
+    "09_iterate_and_step.py",
 )
 
 

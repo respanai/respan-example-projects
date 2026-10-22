@@ -35,17 +35,17 @@ def test_shell_marker_wins_over_dotenv(monkeypatch):
 
 
 def test_all_examples_use_real_runtime_semantic_inputs_and_final_shutdown():
-    assert len(SCRIPTS) == 3
+    assert len(SCRIPTS) == 4
     sources = [script.read_text() for script in SCRIPTS]
-    assert all(
-        "WorkflowEnvironment.start_time_skipping" in source for source in sources
-    )
+    assert all("create_environment(instrumentor)" in source for source in sources)
     assert all("finally:" in source for source in sources)
     assert all("finish_respan(respan)" in source for source in sources)
     assert '"Ada"' in sources[0]
     assert '"expected activity failure"' in sources[1]
     assert '"trace-release"' in sources[2]
     assert "Replayer(" in sources[2]
+    assert "ENABLE_CONTENT_TRACING_KEY" in sources[3]
+    assert "CancelledError" in sources[3]
 
 
 def test_runner_continues_and_reports_aggregate_failures(monkeypatch, capsys):

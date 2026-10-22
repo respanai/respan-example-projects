@@ -1,9 +1,8 @@
 """Trace Burr custom spans and logged attributes."""
 
+from _shared import create_respan, new_run_id, print_trace_lookup, workflow_context
 from burr.core import ApplicationBuilder, State, action
 from burr.visibility import TracerFactory
-
-from _shared import create_respan, new_run_id, print_trace_lookup, workflow_context
 
 WORKFLOW_NAME = "Burr Custom Span Workflow"
 EXAMPLE_NAME = "03_custom_span_workflow"
@@ -30,7 +29,9 @@ def main() -> None:
     )
     app = (
         ApplicationBuilder()
-        .with_identifiers(app_id="custom-span-app", partition_key="user-custom")
+        .with_identifiers(
+            app_id=f"{run_id}:{EXAMPLE_NAME}", partition_key="user-custom"
+        )
         .with_actions(normalize_payload)
         .with_entrypoint("normalize_payload")
         .with_state(payload="  Respan Trace  ")

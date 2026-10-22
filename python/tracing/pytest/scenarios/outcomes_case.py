@@ -1,29 +1,48 @@
-from __future__ import annotations
-
 import pytest
-from respan import task
+from opentelemetry import trace
+from opentelemetry.semconv_ai import SpanAttributes
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE
 
 
-@task(name="calculate_total")
-def calculate_total(subtotal: int, tax: int) -> int:
-    return subtotal + tax
+def test_nested_application_task():
+    with trace.get_tracer("application").start_as_current_span(
+        "calculate_total"
+    ) as span:
+        span.set_attribute(RESPAN_LOG_TYPE, "task")
+        span.set_attribute(
+            SpanAttributes.TRACELOOP_ENTITY_INPUT, '{"subtotal":40,"tax":2}'
+        )
+        total = 40 + 2
+        span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_OUTPUT, "42")
+        assert total == 42
 
 
-def test_nested_application_task() -> None:
-    assert calculate_total(40, 2) == 42
+@pytest.mark.parametrize(
+    "value",
+    [
+        {
+            "vector": list(range(5000)),
+            "zero": 0,
+            "false": False,
+            "api_key": "controlled secret",
+        }
+    ],
+    ids=["native-json"],
+)
+def test_complete_native_json(value):
+    assert value["vector"][-1] == 4999 and value["false"] is False
 
 
-@pytest.mark.parametrize(("left", "right", "expected"), [(2, 3, 5), (7, 8, 15)])
-def test_parametrized_addition(left: int, right: int, expected: int) -> None:
-    assert left + right == expected
+@pytest.mark.skip(reason="controlled skip")
+def test_skip():
+    pass
 
 
-@pytest.mark.skip(reason="deterministic skipped outcome")
-def test_skipped_case() -> None:
-    raise AssertionError("skip marker was ignored")
+@pytest.mark.xfail(reason="controlled expected failure")
+def test_xfail():
+    assert False
 
 
-@pytest.mark.xfail(reason="deterministic expected failure")
-def test_expected_failure() -> None:
-    expected, actual = 1, 2
-    assert expected == actual
+@pytest.mark.xfail(reason="controlled XPASS")
+def test_xpass():
+    pass
