@@ -10,12 +10,26 @@ import {
   traceChain,
   traceTool,
 } from "@arizeai/phoenix-otel";
-import { createRespan, logExampleResult, runWithArizeWorkflow, RUN_ID } from "./_shared.js";
+import {
+  createRespan,
+  finishRespan,
+  logExampleResult,
+  runWithArizeWorkflow,
+  RUN_ID,
+} from "./_shared.js";
 
 const searchKnowledgeBase = traceTool(
   async ({ query }: { query: string }) => [
-    { id: "doc-routing", title: "Trace routing", content: `Route spans for ${query}` },
-    { id: "doc-context", title: "Context", content: "Propagate session, user, tags, and metadata." },
+    {
+      id: "doc-routing",
+      title: "Trace routing",
+      content: `Route spans for ${query}`,
+    },
+    {
+      id: "doc-context",
+      title: "Context",
+      content: "Propagate session, user, tags, and metadata.",
+    },
   ],
   { name: "arize.search_knowledge_base" },
 );
@@ -43,7 +57,10 @@ try {
     let ctx = context.active();
     ctx = setSession(ctx, { sessionId: `${RUN_ID}-session` });
     ctx = setUser(ctx, { userId: "arize-example-user" });
-    ctx = setMetadata(ctx, { example_script: "01_trace_helpers", run_id: RUN_ID });
+    ctx = setMetadata(ctx, {
+      example_script: "01_trace_helpers",
+      run_id: RUN_ID,
+    });
     ctx = setTags(ctx, ["respan-example", "arize", "trace-helpers"]);
     ctx = setPromptTemplate(ctx, {
       template: "Answer using docs about {topic}",
@@ -52,12 +69,16 @@ try {
     });
     ctx = setAttributes(ctx, { "app.request_id": `${RUN_ID}-01` });
 
-    return await context.with(ctx, async () =>
-      await supportAgent("How should I trace Arize TypeScript helper spans with Respan?"),
+    return await context.with(
+      ctx,
+      async () =>
+        await supportAgent(
+          "How should I trace Arize TypeScript helper spans with Respan?",
+        ),
     );
   });
 
   logExampleResult(workflowName, result);
 } finally {
-  await respan.shutdown();
+  await finishRespan(respan);
 }

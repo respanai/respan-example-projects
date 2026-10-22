@@ -7,12 +7,21 @@ import {
   trace,
   withSpan,
 } from "@arizeai/phoenix-otel";
-import { createRespan, logExampleResult, runWithArizeWorkflow } from "./_shared.js";
+import {
+  createRespan,
+  finishRespan,
+  logExampleResult,
+  runWithArizeWorkflow,
+} from "./_shared.js";
 
 const retrieveDocuments = withSpan(
   async (query: string) => [
     { id: "doc-1", content: `Architecture notes for ${query}`, score: 0.97 },
-    { id: "doc-2", content: "OpenInference spans need canonical Respan translation.", score: 0.93 },
+    {
+      id: "doc-2",
+      content: "OpenInference spans need canonical Respan translation.",
+      score: 0.93,
+    },
   ],
   {
     name: "arize.retrieve_documents",
@@ -39,13 +48,15 @@ const embedDocuments = withSpan(
     name: "arize.embed_documents",
     kind: OpenInferenceSpanKind.EMBEDDING,
     processInput: (documents) =>
-      getInputAttributes(JSON.stringify(documents.map((document) => document.content))),
+      getInputAttributes(
+        JSON.stringify(documents.map((document) => document.content)),
+      ),
     processOutput: (embeddings) =>
       getEmbeddingAttributes({
         modelName: "text-embedding-3-small",
         embeddings: embeddings.map((item) => ({
           text: item.text,
-          embedding: item.vector,
+          vector: item.vector,
         })),
       }),
   },
@@ -56,6 +67,7 @@ function createRedactedClassifier() {
     tracer: trace.getTracer("arize-redacted-classifier"),
     traceConfig: {
       hideInputs: true,
+      hideOutputs: true,
       hideOutputText: true,
       hideEmbeddingVectors: true,
     },
@@ -79,7 +91,9 @@ try {
     const classifyWithRedaction = createRedactedClassifier();
     const documents = await retrieveDocuments("Arize TypeScript integration");
     const embeddings = await embedDocuments(documents);
-    const classification = await classifyWithRedaction("Sensitive prompt: trace this account issue");
+    const classification = await classifyWithRedaction(
+      "Sensitive prompt: trace this account issue",
+    );
     return {
       documentCount: documents.length,
       embeddingCount: embeddings.length,
@@ -89,5 +103,5 @@ try {
 
   logExampleResult(workflowName, result);
 } finally {
-  await respan.shutdown();
+  await finishRespan(respan);
 }
