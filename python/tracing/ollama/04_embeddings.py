@@ -1,50 +1,44 @@
-from __future__ import annotations
-
-from _shared import (
-    example_attributes,
-    flush_and_shutdown,
-    make_client,
-    make_custom_identifier,
-    make_respan,
-    model_name,
-    print_result,
-    workflow_name,
-)
-from respan import workflow
-
-EXAMPLE_NAME = "embeddings"
+from _shared import MODEL, client, run_case
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _embeddings_workflow(text: str) -> str:
-    client = make_client()
+def action(provider):
+    c, _, _ = client(
+        {
+            "model": MODEL,
+            "embeddings": [[0.0] * 5001, [1.0] * 5001],
+            "prompt_eval_count": 0,
+            "total_duration": 0,
+            "custom": {"flag": False, "api_key": "controlled-secret"},
+        }
+    )
     try:
-        response = client.embed(
-            model=model_name(),
-            input=text,
+        response = c.embed(
+            model=MODEL,
+            input=["", "Controlled embedding"],
+            dimensions=5001,
+            truncate=False,
+            options={"temperature": 0},
+            keep_alive=0,
         )
-        embeddings = response["embeddings"]
-        vector_count = len(embeddings or [])
-        return f"embedding_vectors={vector_count}"
+        assert len(response.embeddings) == 2 and len(response.embeddings[0]) == 5001
     finally:
-        client.close()
-
-
-def run_embeddings() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    text = ""
-
+        c._client.close()
+    c, _, _ = client({"embedding": [0.0] * 5001})
     try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            print(f"custom_identifier={custom_identifier}", flush=True)
-            print(f"workflow_name={workflow_name(EXAMPLE_NAME)}", flush=True)
-            text = _embeddings_workflow("Trace local model calls with Respan.")
+        assert (
+            len(
+                c.embeddings(
+                    model=MODEL, prompt="", options={"seed": 0}, keep_alive=0
+                ).embedding
+            )
+            == 5001
+        )
     finally:
-        flush_and_shutdown(respan)
-
-    print_result(EXAMPLE_NAME, custom_identifier, text)
+        c._client.close()
+    return (
+        "native batch and legacy 5001-dimensional vectors, zero usage and empty input"
+    )
 
 
 if __name__ == "__main__":
-    run_embeddings()
+    run_case("ollama_embeddings", action)

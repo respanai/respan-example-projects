@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from _shared import (
     example_attributes,
+    finish_respan,
     make_client,
     make_custom_identifier,
     make_respan,
@@ -44,7 +45,7 @@ def run_expected_error() -> None:
             else:
                 raise AssertionError("expected provider failure was not raised")
     finally:
-        respan.shutdown()
+        finish_respan(respan)
     print_result(EXAMPLE_NAME, marker, result)
 
 

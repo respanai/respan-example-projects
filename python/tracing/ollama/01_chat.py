@@ -1,49 +1,37 @@
-from __future__ import annotations
-
-from _shared import (
-    example_attributes,
-    flush_and_shutdown,
-    make_client,
-    make_custom_identifier,
-    make_respan,
-    model_name,
-    print_result,
-    response_message_content,
-    workflow_name,
-)
-from respan import workflow
-
-EXAMPLE_NAME = "chat"
+import ollama
+from _shared import CHAT, MODEL, client, run_case
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _chat_workflow(prompt: str) -> str:
-    client = make_client()
+def action(provider):
+    c, _, requests = client()
     try:
-        response = client.chat(
-            model=model_name(),
-            messages=[{"role": "user", "content": prompt}],
+        history = [
+            {"role": "user", "content": f"Controlled history {i}"} for i in range(75)
+        ]
+        history[-1]["images"] = [b"controlled-image"]
+        schema = {
+            "type": "object",
+            "properties": {
+                "api_key": {"type": "string", "default": "controlled-secret"},
+                "answer": {"type": "string"},
+            },
+        }
+        response = c.chat(
+            model=MODEL,
+            messages=history,
+            format=schema,
+            options=ollama.Options(temperature=0, num_predict=0, seed=0),
+            think=False,
+            keep_alive=0,
         )
-        return response_message_content(response)
+        assert (
+            response.message.thinking == CHAT["message"]["thinking"]
+            and len(requests) == 1
+        )
+        return "75 native messages, image, structured format and zero settings"
     finally:
-        client.close()
-
-
-def run_chat() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    text = ""
-
-    try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            print(f"custom_identifier={custom_identifier}", flush=True)
-            print(f"workflow_name={workflow_name(EXAMPLE_NAME)}", flush=True)
-            text = _chat_workflow("Reply with one concise tracing sentence.")
-    finally:
-        flush_and_shutdown(respan)
-
-    print_result(EXAMPLE_NAME, custom_identifier, text)
+        c._client.close()
 
 
 if __name__ == "__main__":
-    run_chat()
+    run_case("ollama_chat_settings", action)

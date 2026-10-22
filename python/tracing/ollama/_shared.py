@@ -1,317 +1,183 @@
+"""Local-first official Ollama clients using HTTPX's native mock transport."""
+
 from __future__ import annotations
 
-import atexit
+import asyncio
 import json
 import os
-from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import uuid
 from pathlib import Path
-from threading import Thread, current_thread
-from typing import Any
-from uuid import uuid4
 
-from dotenv import load_dotenv
-from ollama import Client
-from respan import Respan, propagate_attributes
+import httpx
+import ollama
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.semconv_ai import SpanAttributes
 from respan_instrumentation_ollama import OllamaInstrumentor
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE, RESPAN_METADATA
+from respan_tracing.utils.span_factory import propagate_attributes
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
-DEFAULT_MODEL = "llama3.2"
-DEFAULT_RUN_ID = f"ollama-{uuid4().hex[:10]}"
-_FAKE_SERVER: ThreadingHTTPServer | None = None
-_FAKE_SERVER_THREAD: Thread | None = None
-
-
-def load_root_env() -> None:
-    # Invocation-scoped values, especially the exact QA marker, take precedence.
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
-
-
-def require_respan_api_key() -> str:
-    load_root_env()
-    api_key = os.getenv("RESPAN_API_KEY")
-    if not api_key:
-        raise RuntimeError("RESPAN_API_KEY must be set in the repo root .env file")
-    return api_key
+EXAMPLE_DIR = Path(__file__).resolve().parent
+MODEL = "llama3.2"
+CHAT = {
+    "model": MODEL,
+    "message": {
+        "role": "assistant",
+        "content": "Native Ollama tracing works.",
+        "thinking": "Controlled reasoning.",
+    },
+    "done": True,
+    "prompt_eval_count": 0,
+    "eval_count": 0,
+    "prompt_eval_cached_count": 0,
+}
 
 
-def respan_base_url() -> str:
-    return os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL).rstrip("/")
+class Body(httpx.SyncByteStream):
+    def __init__(self, frames):
+        self.frames = frames
+        self.reads = 0
+        self.closed = False
+
+    def __iter__(self):
+        for frame in self.frames:
+            self.reads += 1
+            yield json.dumps(frame).encode() + b"\n" if type(frame) is dict else frame
+
+    def close(self):
+        self.closed = True
 
 
-def model_name() -> str:
-    return (
-        os.getenv("RESPAN_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL") or DEFAULT_MODEL
+class AsyncBody(httpx.AsyncByteStream):
+    def __init__(self, frames):
+        self.body = Body(frames)
+
+    async def __aiter__(self):
+        for data in self.body:
+            yield data
+
+    async def aclose(self):
+        self.body.close()
+
+
+def client(payload=CHAT, *, frames=None, status=200, asynchronous=False):
+    body = (
+        (AsyncBody(frames) if asynchronous else Body(frames))
+        if frames is not None
+        else None
     )
+    requests = []
+
+    def response(request):
+        requests.append(request)
+        return (
+            httpx.Response(status, stream=body)
+            if body is not None
+            else httpx.Response(status, json=payload)
+        )
+
+    async def async_response(request):
+        await asyncio.sleep(0)
+        return response(request)
+
+    cls = ollama.AsyncClient if asynchronous else ollama.Client
+    c = cls(transport=httpx.MockTransport(async_response if asynchronous else response))
+    return c, body, requests
 
 
-def example_run_id() -> str:
-    load_root_env()
-    return os.getenv("RESPAN_EXAMPLE_RUN_ID", DEFAULT_RUN_ID)
+def runtime(case):
+    provider = TracerProvider()
+    local = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(local))
+    if os.getenv("RESPAN_EXAMPLE_EXPORT") == "1":
+        from dotenv import load_dotenv
+        from respan_tracing.exporters.respan import RespanSpanExporter
+
+        load_dotenv(
+            Path(
+                os.getenv(
+                    "RESPAN_EXAMPLE_ENV_FILE", str(EXAMPLE_DIR.parents[2] / ".env")
+                )
+            ),
+            override=False,
+        )
+        if not os.getenv("RESPAN_API_KEY"):
+            raise RuntimeError("RESPAN_API_KEY is required for explicit export")
+        exporter = RespanSpanExporter(
+            api_key=os.environ["RESPAN_API_KEY"],
+            endpoint=os.getenv(
+                "RESPAN_TRACE_ENDPOINT", "https://api.respan.ai/api/v2/traces"
+            ),
+        )
+        wire_path = os.getenv("RESPAN_EXAMPLE_WIRE_PATH")
+        if wire_path:
+            actual_post = exporter._session.post
+
+            def observe(url, *args, **kwargs):
+                payload = kwargs.get("json")
+                if payload is None and kwargs.get("data") is not None:
+                    payload = json.loads(kwargs["data"])
+                response = actual_post(url, *args, **kwargs)
+                with open(wire_path, "a", encoding="utf-8") as file:
+                    file.write(
+                        json.dumps(
+                            {"payload": payload, "http_status": response.status_code}
+                        )
+                        + "\n"
+                    )
+                return response
+
+            exporter._session.post = observe
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = OllamaInstrumentor(tracer_provider=provider)
+    instrumentor.activate()
+    marker = os.getenv("RESPAN_EXAMPLE_RUN_ID", "ollama-local-" + uuid.uuid4().hex)
+    metadata = {"run_id": marker, "example_set": "ollama", "example_case": case}
+    attrs = {
+        RESPAN_METADATA: json.dumps(metadata),
+        RESPAN_LOG_TYPE: "workflow",
+        SpanAttributes.TRACELOOP_SPAN_KIND: "workflow",
+        SpanAttributes.TRACELOOP_ENTITY_NAME: case,
+        SpanAttributes.TRACELOOP_ENTITY_PATH: "",
+    }
+    return provider, local, instrumentor, marker, metadata, attrs
 
 
-def make_respan(example_name: str) -> Respan:
-    api_key = require_respan_api_key()
-    run_id = example_run_id()
-    return Respan(
-        api_key=api_key,
-        base_url=respan_base_url(),
-        app_name="ollama-examples",
-        instrumentations=[OllamaInstrumentor()],
-        environment=os.getenv("RESPAN_ENVIRONMENT", "example"),
-        metadata={
-            "integration": "ollama",
-            "example": example_name,
-            "example_run_id": run_id,
-        },
-        is_batching_enabled=False,
-    )
-
-
-def make_client(*, force_compat_server: bool = False) -> Client:
-    load_root_env()
-    return Client(host=ollama_host(force_compat_server=force_compat_server))
-
-
-def ollama_host(*, force_compat_server: bool = False) -> str | None:
-    configured_host = os.getenv("OLLAMA_HOST")
-    if configured_host and not force_compat_server:
-        return configured_host
-    return _start_fake_ollama_server()
-
-
-def workflow_name(example_name: str) -> str:
-    normalized_name = example_name.replace("-", "_")
-    return f"ollama_{normalized_name}"
-
-
-def make_custom_identifier(example_name: str) -> str:
-    return f"ollama-{example_name}-{uuid4().hex[:8]}"
-
-
-@contextmanager
-def example_attributes(example_name: str, custom_identifier: str | None = None):
-    custom_identifier = custom_identifier or make_custom_identifier(example_name)
-    current_workflow_name = workflow_name(example_name)
-    run_id = example_run_id()
-    with propagate_attributes(
-        custom_identifier=custom_identifier,
-        trace_group_identifier=current_workflow_name,
-        metadata={
-            "example": example_name,
-            "example_run_id": run_id,
-            "case_id": custom_identifier,
-            "workflow_name": current_workflow_name,
-        },
-    ):
-        yield custom_identifier
-
-
-def client_mode() -> str:
-    return "ollama-host" if os.getenv("OLLAMA_HOST") else "local-compat-server"
-
-
-def response_message_content(response: Any) -> str:
-    message = _field(response, "message", {})
-    return str(_field(message, "content", "") or "")
-
-
-def response_tool_calls(response: Any) -> list[Any]:
-    message = _field(response, "message", {})
-    tool_calls = _field(message, "tool_calls", []) or []
-    return list(tool_calls)
-
-
-def tool_call_name(tool_call: Any) -> str:
-    function = _field(tool_call, "function", {})
-    return str(_field(function, "name", ""))
-
-
-def tool_call_arguments(tool_call: Any) -> dict[str, Any]:
-    function = _field(tool_call, "function", {})
-    arguments = _field(function, "arguments", {}) or {}
-    if isinstance(arguments, str):
-        try:
-            parsed = json.loads(arguments)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return arguments if isinstance(arguments, dict) else {}
-
-
-def print_result(example_name: str, custom_identifier: str, text: str) -> None:
-    print(f"example={example_name}")
-    print(f"custom_identifier={custom_identifier}")
-    print(f"RESPAN_EXAMPLE_RUN_ID={example_run_id()}")
-    print(f"workflow_name={workflow_name(example_name)}")
-    print(f"client_mode={client_mode()}")
-    print(text.strip())
-
-
-def flush_and_shutdown(respan: Respan) -> None:
+def run_case(case, action):
+    provider, local, instrumentor, marker, metadata, attributes = runtime(case)
     try:
-        respan.flush()
+        with (
+            propagate_attributes(metadata=metadata),
+            provider.get_tracer("ollama.examples").start_as_current_span(
+                case, attributes=attributes
+            ),
+        ):
+            result = action(provider)
+        provider.force_flush()
+        spans = local.get_finished_spans()
+        path = os.getenv("RESPAN_EXAMPLE_LOCAL_PATH")
+        if path:
+            with open(path, "a", encoding="utf-8") as file:
+                file.writelines(
+                    json.dumps(
+                        {
+                            "case": case,
+                            "run_id": marker,
+                            "name": span.name,
+                            "trace_id": f"{span.context.trace_id:032x}",
+                            "span_id": f"{span.context.span_id:016x}",
+                            "parent_id": f"{span.parent.span_id:016x}"
+                            if span.parent
+                            else None,
+                            "status": span.status.status_code.name,
+                            "attributes": dict(span.attributes),
+                        }
+                    )
+                    + "\n"
+                    for span in spans
+                )
+        print(f"{case}: {result}; spans={len(spans)}; run_id={marker}")
     finally:
-        try:
-            respan.shutdown()
-        finally:
-            _stop_fake_ollama_server()
-
-
-def _field(value: Any, name: str, default: Any = None) -> Any:
-    if value is None:
-        return default
-    if isinstance(value, dict):
-        return value.get(name, default)
-    getter = getattr(value, "get", None)
-    if callable(getter):
-        try:
-            return getter(name, default)
-        except Exception:  # noqa: BLE001 - fall back to attribute access
-            return getattr(value, name, default)
-    return getattr(value, name, default)
-
-
-def _start_fake_ollama_server() -> str:
-    global _FAKE_SERVER, _FAKE_SERVER_THREAD
-    if _FAKE_SERVER is None:
-        _FAKE_SERVER = ThreadingHTTPServer(("127.0.0.1", 0), _FakeOllamaHandler)
-        _FAKE_SERVER_THREAD = Thread(target=_FAKE_SERVER.serve_forever, daemon=True)
-        _FAKE_SERVER_THREAD.start()
-        atexit.register(_stop_fake_ollama_server)
-    host, port = _FAKE_SERVER.server_address
-    return f"http://{host}:{port}"
-
-
-def _stop_fake_ollama_server() -> None:
-    global _FAKE_SERVER, _FAKE_SERVER_THREAD
-    server = _FAKE_SERVER
-    thread = _FAKE_SERVER_THREAD
-    _FAKE_SERVER = None
-    _FAKE_SERVER_THREAD = None
-    if server is None:
-        return
-    server.shutdown()
-    server.server_close()
-    if thread is not None and thread is not current_thread():
-        thread.join(timeout=2)
-
-
-class _FakeOllamaHandler(BaseHTTPRequestHandler):
-    server_version = "RespanFakeOllama/1.0"
-
-    def do_POST(self) -> None:
-        length = int(self.headers.get("content-length", "0") or "0")
-        payload = json.loads(self.rfile.read(length) or b"{}")
-        if self.path == "/api/chat":
-            self._handle_chat(payload)
-            return
-        if self.path == "/api/generate":
-            self._handle_generate(payload)
-            return
-        if self.path in {"/api/embed", "/api/embeddings"}:
-            self._write_json(
-                {
-                    "model": payload.get("model") or model_name(),
-                    "embeddings": [[0.1, 0.2, 0.3]],
-                    "embedding": [0.1, 0.2, 0.3],
-                    "prompt_eval_count": 4,
-                    "done": True,
-                }
-            )
-            return
-        self.send_error(404, "unknown fake Ollama endpoint")
-
-    def log_message(self, format: str, *args: Any) -> None:
-        return
-
-    def _handle_chat(self, payload: dict[str, Any]) -> None:
-        messages = payload.get("messages") or []
-        if any(
-            "force expected provider error" in str(message.get("content", ""))
-            for message in messages
-            if isinstance(message, dict)
-        ):
-            self._write_json(
-                {"error": "Ollama compatibility server unavailable"},
-                status_code=503,
-            )
-            return
-        if any(
-            message.get("role") == "tool"
-            for message in messages
-            if isinstance(message, dict)
-        ):
-            content = "Tool result received: sunny and 22 C in Tokyo."
-            message = {"role": "assistant", "content": content}
-        elif payload.get("tools"):
-            message = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": {"city": "Tokyo"},
-                        },
-                    }
-                ],
-            }
-        else:
-            message = {
-                "role": "assistant",
-                "content": "Ollama traces are visible in Respan.",
-            }
-        self._write_json(
-            {
-                "model": payload.get("model") or model_name(),
-                "created_at": "2026-05-28T00:00:00Z",
-                "message": message,
-                "done": True,
-                "prompt_eval_count": 9,
-                "eval_count": 7,
-            }
-        )
-
-    def _handle_generate(self, payload: dict[str, Any]) -> None:
-        if payload.get("stream"):
-            self.send_response(200)
-            self.send_header("content-type", "application/x-ndjson")
-            self.end_headers()
-            chunks = [
-                {
-                    "model": payload.get("model") or model_name(),
-                    "response": "Streaming ",
-                    "done": False,
-                },
-                {
-                    "model": payload.get("model") or model_name(),
-                    "response": "generation captured.",
-                    "done": True,
-                    "prompt_eval_count": 6,
-                    "eval_count": 5,
-                },
-            ]
-            for chunk in chunks:
-                self.wfile.write(json.dumps(chunk).encode("utf-8") + b"\n")
-            return
-        self._write_json(
-            {
-                "model": payload.get("model") or model_name(),
-                "created_at": "2026-05-28T00:00:00Z",
-                "response": "Generated completion captured.",
-                "done": True,
-                "prompt_eval_count": 6,
-                "eval_count": 5,
-            }
-        )
-
-    def _write_json(self, payload: dict[str, Any], status_code: int = 200) -> None:
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        instrumentor.deactivate()
+        provider.shutdown()

@@ -4,6 +4,7 @@ import asyncio
 
 from _shared import (
     example_attributes,
+    finish_respan,
     first_message_text,
     make_async_client,
     make_custom_identifier,
@@ -42,7 +43,7 @@ async def run_async_chat() -> None:
                 "Reply with one concise sentence about async tracing."
             )
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 

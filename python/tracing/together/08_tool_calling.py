@@ -5,6 +5,7 @@ from typing import Any
 
 from _shared import (
     example_attributes,
+    finish_respan,
     first_message_text,
     make_client,
     make_custom_identifier,
@@ -121,7 +122,7 @@ def run_tool_calling() -> None:
             print_start(EXAMPLE_NAME, custom_identifier)
             text = _tool_calling_workflow("Tokyo")
     finally:
-        respan.shutdown()
+        finish_respan(respan)
 
     print_result(EXAMPLE_NAME, custom_identifier, text)
 

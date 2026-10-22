@@ -1,4 +1,4 @@
-respan-ai
-respan-instrumentation-together
-together>=2.31,<3
+respan-ai==4.1.0
+respan-instrumentation-together>=0.1.0
+together>=2.0.0,<3
 python-dotenv>=1,<2

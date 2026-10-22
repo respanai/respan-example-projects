@@ -1,61 +1,35 @@
-from __future__ import annotations
-
-from _shared import (
-    example_attributes,
-    flush_and_shutdown,
-    make_client,
-    make_custom_identifier,
-    make_respan,
-    model_name,
-    print_result,
-    workflow_name,
-)
-from ollama import ResponseError
-from respan import workflow
-
-EXAMPLE_NAME = "expected-error"
+import ollama
+from _shared import CHAT, MODEL, client, run_case
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _expected_error_workflow(prompt: str) -> str:
-    client = make_client(force_compat_server=True)
+def action(provider):
+    c, _, _ = client({"error": "Controlled provider refusal"}, status=429)
     try:
-        response = client.chat(
-            model=model_name(),
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-        )
-        return str(response)
+        try:
+            c.chat(model=MODEL, messages=[])
+        except ollama.ResponseError as error:
+            assert error.status_code == 429
+        else:
+            raise AssertionError("expected native provider error")
     finally:
-        client.close()
-
-
-def run_expected_error() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    text = ""
-
+        c._client.close()
+    c, body, _ = client(frames=[CHAT, {"error": "Controlled stream failure"}])
     try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            print(f"custom_identifier={custom_identifier}", flush=True)
-            print(f"workflow_name={workflow_name(EXAMPLE_NAME)}", flush=True)
-            try:
-                _expected_error_workflow("force expected provider error")
-            except ResponseError as exc:
-                if exc.status_code != 503:
-                    raise
-                text = f"expected_status={exc.status_code} error={exc.error}"
-            else:
-                raise AssertionError("The compatibility server should return HTTP 503")
+        try:
+            list(c.chat(model=MODEL, messages=[], stream=True))
+        except ollama.ResponseError as error:
+            assert error.status_code == -1 and body.closed
+        else:
+            raise AssertionError("expected native event error")
     finally:
-        flush_and_shutdown(respan)
-
-    print_result(EXAMPLE_NAME, custom_identifier, text)
+        c._client.close()
+    c, _, _ = client({"response": ""})
+    try:
+        assert c.generate(model=MODEL, prompt="").response == ""
+    finally:
+        c._client.close()
+    return "native HTTP 429, HTTP 200 event failure with partial output, and empty generation response"
 
 
 if __name__ == "__main__":
-    run_expected_error()
+    run_case("ollama_expected_error", action)
