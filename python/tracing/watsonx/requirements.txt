@@ -1,4 +1,6 @@
-python-dotenv>=1.0.0
-ibm-watsonx-ai>=1.6.3,<2
-respan-ai>=4,<5
-respan-instrumentation-watsonx>=0.1.0,<1
+respan-tracing>=2.17.0
+respan-sdk>=2.6.26
+respan-instrumentation-watsonx
+ibm-watsonx-ai>=1.6.3,<2.0.0
+opentelemetry-semantic-conventions-ai>=0.5.1,<0.6.0
+python-dotenv

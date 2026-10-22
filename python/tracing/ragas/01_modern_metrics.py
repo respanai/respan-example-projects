@@ -1,43 +1,30 @@
+"""Controlled released Ragas APIs; provider calls are local unless explicitly exported."""
+
 from __future__ import annotations
 
+import os
+
+os.environ["RAGAS_DO_NOT_TRACK"] = "true"
 import asyncio
 
-from _shared import create_respan, example_context, finish_respan
+from _shared import run_case
 from ragas.metrics.collections import ExactMatch
-from respan import workflow
-
-CASE = "modern_metrics"
+from ragas.metrics.result import MetricResult
 
 
-@workflow(name="ragas_modern_metrics")
-def metric_workflow(reference: str, response: str) -> dict[str, object]:
+def action(provider, local):
     metric = ExactMatch()
-    sync_value = metric.score(reference=reference, response=response).value
-    async_value = asyncio.run(
-        metric.ascore(reference=reference, response=response)
-    ).value
-    batch = metric.batch_score(
-        [
-            {"reference": reference, "response": response},
-            {"reference": "Rome", "response": "Milan"},
-        ]
+    row = {"reference": "Paris", "response": "Rome"}
+    result = metric.score(**row)
+    assert type(result) is MetricResult and result.value == 0
+    assert asyncio.run(metric.ascore(**row)).value == 0
+    batch = metric.batch_score([row] * 75)
+    async_batch = asyncio.run(metric.abatch_score([row] * 75))
+    assert len(batch) == len(async_batch) == 75 and all(
+        r.value == 0 for r in batch + async_batch
     )
-    return {
-        "sync": sync_value,
-        "async": async_value,
-        "batch": [item.value for item in batch],
-    }
-
-
-def main() -> None:
-    respan = create_respan()
-    try:
-        with example_context(CASE):
-            result = metric_workflow("Paris", "Paris")
-            print(result, flush=True)
-    finally:
-        finish_respan(respan)
+    return "score/ascore and complete native 75-item batch_score/abatch_score"
 
 
 if __name__ == "__main__":
-    main()
+    run_case("ragas_collections", action)
