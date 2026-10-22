@@ -1,49 +1,29 @@
 import {
+  assert,
   codexThreadOptions,
   createCodex,
   createRespan,
   logExampleResult,
   runWithCodexWorkflow,
   shutdownRespan,
-  withCodexRetries,
-  withTimeout,
+  verifyCaptured,
 } from "./_shared.js";
-
-const workflowName = "codex-sdk-ts-streaming";
-const respan = createRespan("codex-sdk-typescript-streaming");
-
+const name = "codex-sdk-ts-streaming";
+const respan = createRespan(name);
 try {
-  const details = await runWithCodexWorkflow(respan, workflowName, async () =>
-    await withCodexRetries(workflowName, async () => {
-      const codex = createCodex();
-      const thread = codex.startThread(codexThreadOptions());
-      const streamed = await thread.runStreamed(
-        "Run `pwd` if useful, then answer with one short sentence that streaming worked.",
-      );
-      const eventTypes: string[] = [];
-      const itemTypes: string[] = [];
-      let finalResponse = "";
-
-      await withTimeout(
-        (async () => {
-          for await (const event of streamed.events) {
-            eventTypes.push(event.type);
-            if ("item" in event) {
-              itemTypes.push(event.item.type);
-              if (event.type === "item.completed" && event.item.type === "agent_message") {
-                finalResponse = event.item.text;
-              }
-            }
-          }
-        })(),
-        workflowName,
-      );
-
-      return { eventTypes, itemTypes, finalResponse };
-    }),
-  );
-
-  logExampleResult(workflowName, details);
+  const summary = await runWithCodexWorkflow(respan, name, async () => {
+    const stream = await createCodex()
+      .startThread(codexThreadOptions())
+      .runStreamed("Stream a controlled result.");
+    const iterator = stream.events;
+    const eventTypes: string[] = [];
+    for await (const event of iterator) eventTypes.push(event.type);
+    assert.equal(stream.events, iterator);
+    assert.ok(eventTypes.includes("turn.completed"));
+    return { eventTypes };
+  });
+  verifyCaptured();
+  logExampleResult(name, summary);
 } finally {
   await shutdownRespan(respan);
 }

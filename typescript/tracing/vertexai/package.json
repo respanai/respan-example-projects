@@ -4,24 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "01:generate": "tsx 01_generate_content.ts",
-    "02:stream": "tsx 02_generate_content_stream.ts",
-    "03:chat-tool": "tsx 03_chat_tool_call.ts",
-    "04:error": "tsx 04_error_capture.ts",
-    "test": "node --import tsx --test tests/*.test.ts",
-    "all": "tsx 01_generate_content.ts && tsx 02_generate_content_stream.ts && tsx 03_chat_tool_call.ts && tsx 04_error_capture.ts"
+    "all": "tsx run_all.ts",
+    "examples": "tsx run_all.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@google-cloud/vertexai": "^1.12.0",
     "@respan/instrumentation-vertexai": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-vertexai",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^17.2.3",
+    "@respan/respan": "2.5.0",
+    "@respan/respan-sdk": "1.3.4",
+    "@respan/tracing": "1.6.1",
+    "@google/genai": "2.28.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "@google-cloud/vertexai": "1.12.0",
+    "@traceloop/ai-semantic-conventions": "^0.13.0"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1"
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,172 +1,241 @@
-import dotenv from "dotenv";
-import { Codex, type ThreadOptions } from "@openai/codex-sdk";
-import * as CodexSDKModule from "@openai/codex-sdk";
-import { Respan } from "@respan/respan";
-import { CodexSDKInstrumentor } from "@respan/instrumentation-codex-sdk";
+import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
+import fsSync from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
-
-const exampleDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(exampleDir, "../../..");
-dotenv.config({ path: path.join(repoRoot, ".env") });
-
-export const RUN_ID = process.env.RESPAN_EXAMPLE_RUN_ID || `codex-sdk-ts-${Date.now()}`;
-export const EXAMPLE_DIR = exampleDir;
-const DEFAULT_TIMEOUT_SECONDS = Number.parseInt(
-  process.env.CODEX_EXAMPLE_TIMEOUT_SECONDS || "180",
-  10,
+import dotenv from "dotenv";
+import {
+  Codex,
+  type CodexOptions,
+  type ThreadOptions,
+} from "@openai/codex-sdk";
+import * as CodexSDKModule from "@openai/codex-sdk";
+import {
+  RespanTelemetry as Respan,
+  propagateAttributes,
+} from "@respan/tracing";
+import {
+  CodexSDKInstrumentor,
+  type CodexSDKInstrumentorOptions,
+} from "@respan/instrumentation-codex-sdk";
+import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
+export { assert };
+export const EXAMPLE_DIR = path.dirname(fileURLToPath(import.meta.url));
+export const RUN_ID =
+  process.env.RESPAN_EXAMPLE_RUN_ID || `codex-sdk-ts-${Date.now()}`;
+export const LIVE = process.env.CODEX_EXAMPLE_LIVE === "1";
+const EXPORT = process.env.RESPAN_EXAMPLE_EXPORT === "1";
+if (LIVE || EXPORT)
+  dotenv.config({
+    path: path.resolve(EXAMPLE_DIR, "../../../.env"),
+    override: false,
+  });
+const nativeManifest = JSON.parse(
+  fsSync.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.resolve("@openai/codex-sdk"))),
+      "../package.json",
+    ),
+    "utf8",
+  ),
 );
-
-function envValue(name: string): string | undefined {
-  const direct = process.env[name];
-  if (direct && direct.trim()) return direct.trim();
-  const spaced = process.env[`${name} `];
-  if (spaced && spaced.trim()) return spaced.trim();
-  return undefined;
-}
-
-export function createRespan(appName = "codex-sdk-typescript-examples"): Respan {
-  const apiKey = envValue("RESPAN_API_KEY");
-  if (!apiKey) {
-    throw new Error("Set RESPAN_API_KEY in the respan-example-projects repo root .env file.");
-  }
-
-  return new Respan({
-    apiKey,
-    baseURL: envValue("RESPAN_BASE_URL"),
+export const NATIVE_VERSION: string = nativeManifest.version;
+export const CURRENT_FEATURES = Number(NATIVE_VERSION.split(".")[1]) >= 162;
+export const captured: Array<{
+  id: string;
+  traceId: string;
+  parentId?: string;
+  name: string;
+  attrs: Record<string, unknown>;
+  status: unknown;
+}> = [];
+const collector: SpanExporter = {
+  export(spans, callback) {
+    for (const span of spans)
+      captured.push({
+        id: span.spanContext().spanId,
+        traceId: span.spanContext().traceId,
+        parentId: span.parentSpanContext?.spanId,
+        name: span.name,
+        attrs: { ...span.attributes },
+        status: span.status,
+      });
+    callback({ code: 0 });
+  },
+  shutdown: async () => {},
+};
+const owners = new WeakMap<Respan, CodexSDKInstrumentor>();
+export function createRespan(
+  appName = "codex-sdk-typescript-examples",
+  options: CodexSDKInstrumentorOptions = {},
+): Respan {
+  if (EXPORT && !process.env.RESPAN_API_KEY)
+    throw new Error("Set RESPAN_API_KEY for explicit trace export.");
+  const owner = new CodexSDKInstrumentor({
+    sdkModule: CodexSDKModule,
+    agentName: "controlled-codex-agent",
+    ...options,
+  });
+  const respan = new Respan({
     appName,
-    instrumentations: [
-      new CodexSDKInstrumentor({
-        sdkModule: CodexSDKModule,
-        workflowName: appName,
-        agentName: "respan-codex-sdk-example-agent",
-      }),
-    ],
+    apiKey: EXPORT ? process.env.RESPAN_API_KEY : "",
+    baseURL: process.env.RESPAN_BASE_URL,
+    ...(!EXPORT ? { exporter: collector } : {}),
+    traceContent: options.traceContent !== false,
     silenceInitializationMessage: true,
+    disableBatch: true,
+    disabledInstrumentations: [
+      "http",
+      "openAI",
+      "anthropic",
+      "azureOpenAI",
+      "cohere",
+      "bedrock",
+      "googleVertexAI",
+      "googleAIPlatform",
+      "pinecone",
+      "together",
+      "langChain",
+      "llamaIndex",
+      "chromaDB",
+      "qdrant",
+    ],
   });
+  owners.set(respan, owner);
+  return respan;
 }
-
-export function createCodex(options: { codexPathOverride?: string } = {}): Codex {
-  const apiKey = envValue("CODEX_API_KEY") || envValue("RESPAN_GATEWAY_API_KEY") || envValue("OPENAI_API_KEY");
-  if (!apiKey && !options.codexPathOverride) {
-    throw new Error("Set CODEX_API_KEY, RESPAN_GATEWAY_API_KEY, or OPENAI_API_KEY in the repo root .env file.");
+export function ownerFor(respan: Respan): CodexSDKInstrumentor {
+  return owners.get(respan)!;
+}
+export function createCodex(
+  options: {
+    scenario?: string;
+    codexPathOverride?: string;
+    requestPath?: string;
+    codexOptions?: CodexOptions;
+  } = {},
+): Codex {
+  if (LIVE) {
+    const apiKey = process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY;
+    if (!apiKey)
+      throw new Error(
+        "Set CODEX_API_KEY or OPENAI_API_KEY for explicit live inference.",
+      );
+    return new Codex({
+      apiKey,
+      baseUrl: process.env.CODEX_BASE_URL || process.env.OPENAI_BASE_URL,
+      ...options.codexOptions,
+      ...(options.codexPathOverride
+        ? { codexPathOverride: options.codexPathOverride }
+        : {}),
+    });
   }
-
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value === "string") env[key] = value;
-  }
-  if (apiKey) {
-    env.CODEX_API_KEY = apiKey;
-    env.OPENAI_API_KEY = apiKey;
-  }
-
   return new Codex({
-    apiKey,
-    baseUrl: envValue("CODEX_BASE_URL") || envValue("RESPAN_GATEWAY_BASE_URL") || envValue("OPENAI_BASE_URL"),
-    codexPathOverride: options.codexPathOverride,
-    env,
+    ...options.codexOptions,
+    codexPathOverride:
+      options.codexPathOverride ||
+      path.join(EXAMPLE_DIR, "_fixtures/controlled-codex.cjs"),
+    env: {
+      PATH: process.env.PATH || "",
+      CODEX_FIXTURE_SCENARIO: options.scenario || "all",
+      CODEX_FIXTURE_CACHE_WRITE: CURRENT_FEATURES ? "1" : "0",
+      ...(options.requestPath
+        ? { CODEX_FIXTURE_REQUEST_PATH: options.requestPath }
+        : {}),
+    },
   });
 }
-
-export function codexThreadOptions(overrides: ThreadOptions = {}): ThreadOptions {
-  const model = envValue("CODEX_MODEL") || envValue("RESPAN_CODEX_MODEL");
+export function codexThreadOptions(
+  overrides: ThreadOptions = {},
+): ThreadOptions {
   return {
     workingDirectory: EXAMPLE_DIR,
     skipGitRepoCheck: true,
     sandboxMode: "read-only",
     approvalPolicy: "never",
     networkAccessEnabled: false,
-    webSearchEnabled: false,
-    ...(model ? { model } : {}),
+    webSearchMode: "disabled",
+    ...(process.env.CODEX_MODEL || !LIVE
+      ? { model: process.env.CODEX_MODEL || "controlled-model" }
+      : {}),
     ...overrides,
   };
 }
-
 export async function runWithCodexWorkflow<T>(
   respan: Respan,
-  workflowName: string,
+  name: string,
   fn: () => Promise<T>,
 ): Promise<T> {
   await respan.initialize();
-  return await respan.propagateAttributes(
+  await owners.get(respan)!.activate();
+  if (EXPORT)
+    respan.addProcessor({
+      name: "controlled-capture",
+      exporter: collector,
+      filter: () => true,
+      disableBatch: true,
+    });
+  return propagateAttributes(
     {
-      trace_group_identifier: workflowName,
+      trace_group_identifier: name,
       custom_identifier: RUN_ID,
       metadata: {
         example: "typescript-codex-sdk",
         run_id: RUN_ID,
-        workflow_name: workflowName,
+        workflow_name: name,
+        native_version: NATIVE_VERSION,
+        controlled_transport: !LIVE,
       },
     },
-    async () => await respan.withWorkflow({ name: workflowName }, fn),
+    () => respan.withWorkflow({ name }, fn),
   );
 }
-
 export async function shutdownRespan(respan: Respan): Promise<void> {
+  owners.get(respan)!.deactivate();
   await respan.shutdown();
-}
-
-export function logExampleResult(workflowName: string, details: Record<string, unknown>): void {
-  console.log(JSON.stringify({ workflowName, runId: RUN_ID, ...details }, null, 2));
-}
-
-export async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(
-      () => reject(new Error(`${label} timed out after ${DEFAULT_TIMEOUT_SECONDS}s`)),
-      DEFAULT_TIMEOUT_SECONDS * 1000,
+  if (process.env.RESPAN_EXAMPLE_CAPTURE_PATH)
+    await fs.writeFile(
+      process.env.RESPAN_EXAMPLE_CAPTURE_PATH,
+      JSON.stringify(captured, null, 2),
     );
-  });
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
 }
-
-export async function withCodexRetries<T>(
-  label: string,
-  run: () => Promise<T>,
-  attempts = 3,
-): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await run();
-    } catch (error) {
-      lastError = error;
-      if (attempt >= attempts || !isTransientCodexError(error)) {
-        throw error;
-      }
-      const delayMs = 1500 * attempt;
-      console.warn(`${label}: transient Codex error on attempt ${attempt}; retrying in ${delayMs}ms.`);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+export function logExampleResult(
+  name: string,
+  details: Record<string, unknown>,
+): void {
+  console.log(
+    JSON.stringify({
+      workflowName: name,
+      runId: RUN_ID,
+      nativeVersion: NATIVE_VERSION,
+      controlledTransport: !LIVE,
+      spanCount: captured.length,
+      ...details,
+    }),
+  );
 }
-
-function isTransientCodexError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /high demand|temporar|429|500|502|503|504|rate limit|ECONNRESET|ETIMEDOUT/i.test(message);
-}
-
 export async function createScratchWorkspace(name: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `${RUN_ID}-${name}-`));
-  await fs.writeFile(path.join(dir, "README.md"), "# Codex SDK scratch workspace\n", "utf8");
-  return dir;
+  return fs.mkdtemp(path.join(os.tmpdir(), `respan-codex-${name}-`));
 }
-
 export async function createDemoImage(): Promise<string> {
-  const dir = path.join(exampleDir, ".generated");
-  await fs.mkdir(dir, { recursive: true });
-  const imagePath = path.join(dir, "codex-demo.png");
-  const pngBase64 =
-    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAGElEQVR4nGP8z8DwnwEJMDIwMDAwAADpVgQDAZQcFwAAAABJRU5ErkJggg==";
-  await fs.writeFile(imagePath, Buffer.from(pngBase64, "base64"));
-  return imagePath;
+  const dir = await createScratchWorkspace("image");
+  const file = path.join(dir, "controlled.png");
+  await fs.writeFile(
+    file,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAGElEQVR4nGP8z8DwnwEJMDIwMDAwAADpVgQDAZQcFwAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  );
+  return file;
+}
+export function verifyCaptured(): void {
+  for (const span of captured) {
+    assert.ok(
+      !Object.keys(span.attrs).some((k) => k.startsWith("respan.internal.")),
+    );
+    assert.notEqual(span.attrs["respan.entity.log_type"], "chat");
+    assert.equal(span.attrs["gen_ai.tool.call.id"], undefined);
+  }
 }
