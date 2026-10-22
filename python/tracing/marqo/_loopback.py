@@ -1,112 +1,104 @@
-"""Bounded Marqo protocol fixture for deterministic tracing examples."""
-
-from __future__ import annotations
-
 import json
 import threading
-from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
 from urllib.parse import urlsplit
 
 
-class _LoopbackState:
-    def __init__(self) -> None:
-        self.documents: list[dict[str, Any]] = []
+@contextmanager
+def server():
+    requests = []
 
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
 
-class _LoopbackServer(ThreadingHTTPServer):
-    state: _LoopbackState
-
-
-class _MarqoHandler(BaseHTTPRequestHandler):
-    server: _LoopbackServer
-
-    def log_message(self, _format: str, *_args: object) -> None:
-        return
-
-    def _send_json(self, status: int, payload: object) -> None:
-        content = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
-
-    def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0"))
-        if not length:
-            return {}
-        return json.loads(self.rfile.read(length))
-
-    def do_GET(self) -> None:
-        path = urlsplit(self.path).path
-        if path == "/":
-            self._send_json(200, {"version": "3.18.2"})
-            return
-        if path.endswith("/health"):
-            self._send_json(
-                503,
-                {
-                    "message": "loopback Marqo service unavailable",
+        def serve(self):
+            path = urlsplit(self.path).path
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else None
+            requests.append({"method": self.command, "path": self.path, "body": body})
+            status = 503 if path.endswith("/health") else 200
+            if path == "/":
+                payload = {"version": "3.18.2"}
+            elif status == 503:
+                payload = {
+                    "message": 'controlled error Bearer "PRIVATE SPACE"',
                     "code": "service_unavailable",
                     "type": "service_unavailable",
                     "link": "",
-                },
-            )
-            return
-        self._send_json(404, {"message": "not found"})
-
-    def do_POST(self) -> None:
-        path = urlsplit(self.path).path
-        payload = self._read_json()
-        if path.endswith("/documents"):
-            self.server.state.documents = list(payload.get("documents", []))
-            self._send_json(
-                200,
-                {
+                }
+            elif path.endswith("/embed"):
+                payload = {
+                    "embeddings": [
+                        {
+                            "content": "native",
+                            "embedding": [float(i) for i in range(5001)],
+                            "flag": False,
+                        }
+                    ],
+                    "processingTimeMs": 0,
+                    "model": "actual-controlled-model",
+                    "empty": "",
+                }
+            elif path.endswith("/search"):
+                payload = {
+                    "hits": [
+                        {"_id": str(i), "_score": 0, "flag": False} for i in range(75)
+                    ],
+                    "processingTimeMs": 0,
+                }
+            elif path.endswith("/recommend"):
+                payload = {"hits": [], "processingTimeMs": 0}
+            elif path.endswith("/documents") and self.command in ["POST", "PUT"]:
+                payload = {
                     "errors": False,
                     "items": [
-                        {"_id": document.get("_id"), "status": 200}
-                        for document in self.server.state.documents
+                        {"_id": str(i), "status": 200}
+                        for i in range(len(body.get("documents", [])))
                     ],
-                    "processingTimeMs": 1,
-                },
-            )
-            return
-        if path.endswith("/search"):
-            hits = [
-                {**document, "_score": round(0.95 - index * 0.05, 2)}
-                for index, document in enumerate(self.server.state.documents[:2])
-            ]
-            self._send_json(200, {"hits": hits, "processingTimeMs": 1})
-            return
-        if path.startswith("/indexes/"):
-            self._send_json(200, {"acknowledged": True})
-            return
-        self._send_json(404, {"message": "not found"})
+                    "processingTimeMs": 0,
+                }
+            elif path.endswith("/documents/delete-batch"):
+                payload = {"deletedDocuments": len(body)}
+            elif "/documents/" in path:
+                payload = {"_id": "doc", "vector": [0.0] * 5001, "flag": False}
+            elif path.endswith("/documents"):
+                payload = {
+                    "results": [
+                        {"_id": str(i), "vector": [0.0] * 5001}
+                        for i in range(len(body or []))
+                    ]
+                }
+            elif path.endswith("/settings"):
+                payload = {
+                    "model": "actual-controlled-model",
+                    "normalizeEmbeddings": False,
+                }
+            elif path.endswith("/stats"):
+                payload = {"numberOfDocuments": 0, "numberOfVectors": 0}
+            else:
+                payload = {
+                    "acknowledged": True,
+                    "results": [],
+                    "status": "ready",
+                    "models": [],
+                }
+            encoded = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
 
-    def do_DELETE(self) -> None:
-        path = urlsplit(self.path).path
-        if path.startswith("/indexes/"):
-            self.server.state.documents = []
-            self._send_json(200, {"acknowledged": True})
-            return
-        self._send_json(404, {"message": "not found"})
+        do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = serve
 
-
-@contextmanager
-def loopback_marqo_url() -> Iterator[str]:
-    """Yield an ephemeral localhost endpoint and always stop its server."""
-
-    server = _LoopbackServer(("127.0.0.1", 0), _MarqoHandler)
-    server.state = _LoopbackState()
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        yield f"http://127.0.0.1:{http.server_port}", requests
     finally:
-        server.shutdown()
-        thread.join(timeout=5)
-        server.server_close()
+        http.shutdown()
+        http.server_close()
+        thread.join()

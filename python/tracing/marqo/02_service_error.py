@@ -1,39 +1,28 @@
-from _shared import (
-    create_respan,
-    finish_respan,
-    marqo_client,
-    print_result,
-    unique_index_name,
-    workflow_attributes,
-)
-from marqo.errors import MarqoWebError
-from respan import Respan, workflow
+"""Actual released Marqo clients; deterministic native HTTP by default."""
 
-WORKFLOW_NAME = "marqo_service_error_workflow"
+import json
+
+from _shared import marqo_client, run_case
 
 
-@workflow(name=WORKFLOW_NAME)
-def run_service_error() -> None:
-    with marqo_client(force_loopback=True) as client:
-        client.index(unique_index_name()).health()
+def action(provider, local):
+    from marqo.errors import MarqoWebError
 
-
-def main() -> None:
-    respan = create_respan(WORKFLOW_NAME)
-    try:
+    with marqo_client() as (client, _requests):
         try:
-            with Respan.propagate_attributes(**workflow_attributes(WORKFLOW_NAME)):
-                run_service_error()
-        except MarqoWebError as exc:
-            print_result(
-                WORKFLOW_NAME,
-                {"error": type(exc).__name__, "message": str(exc)},
-            )
+            client.index("docs").health()
+        except MarqoWebError as error:
+            assert error.status_code == 503
         else:
-            raise AssertionError("the loopback Marqo health probe should fail")
-    finally:
-        finish_respan(respan)
+            raise AssertionError("native error expected")
+    span = local.get_finished_spans()[-1]
+    assert (
+        span.status.status_code.name == "ERROR"
+        and "traceloop.entity.output" not in span.attributes
+    )
+    assert "PRIVATE" not in json.dumps(dict(span.attributes))
+    return "native503/error identity and diagnostics, no fabricated output"
 
 
 if __name__ == "__main__":
-    main()
+    run_case("marqo_native_error", action)

@@ -1,100 +1,154 @@
-"""Shared setup for the Marqo tracing example."""
+"""Native local Marqo examples with explicit controlled trace export."""
 
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator
-from contextlib import contextmanager
+import sys
+import uuid
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
 
-from _loopback import loopback_marqo_url
-from dotenv import load_dotenv
-from respan import Respan
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.semconv_ai import SpanAttributes
 from respan_instrumentation_marqo import MarqoInstrumentor
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE, RESPAN_METADATA
+from respan_tracing.utils.span_factory import propagate_attributes
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = EXAMPLE_DIR.parents[2]
-RESPAN_BASE_URL = "https://api.respan.ai/api"
-EXAMPLE_SET = "marqo"
-_RUN_ID: str | None = None
+if "--export" in sys.argv:
+    os.environ["RESPAN_EXAMPLE_EXPORT"] = "1"
 
 
-def load_example_env() -> str:
-    global _RUN_ID
+class Marker(SpanProcessor):
+    def __init__(self, metadata):
+        self.metadata = metadata
 
-    env_path = REPO_ROOT / ".env"
-    invocation_run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip()
-    load_dotenv(env_path, override=True)
-    if invocation_run_id:
-        os.environ["RESPAN_EXAMPLE_RUN_ID"] = invocation_run_id
-    if not os.getenv("RESPAN_API_KEY"):
-        raise RuntimeError(f"RESPAN_API_KEY is required in {env_path}")
-    if _RUN_ID is None:
-        configured_run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID", "").strip()
-        _RUN_ID = configured_run_id or f"marqo-{uuid4().hex[:8]}"
-    return _RUN_ID
+    def on_start(self, span, parent_context=None):
+        span.set_attribute(RESPAN_METADATA, json.dumps(self.metadata))
+        for key, item in self.metadata.items():
+            span.set_attribute(f"{RESPAN_METADATA}.{key}", item)
+
+    def on_end(self, span):
+        pass
+
+    def shutdown(self):
+        pass
 
 
-def create_respan(workflow_name: str) -> Respan:
-    run_id = load_example_env()
-    return Respan(
-        api_key=os.environ["RESPAN_API_KEY"],
-        base_url=os.getenv("RESPAN_BASE_URL", RESPAN_BASE_URL),
-        app_name=workflow_name,
-        metadata={
-            "example_run_id": run_id,
-            "example_set": EXAMPLE_SET,
-            "workflow_name": workflow_name,
-        },
-        instrumentations=[MarqoInstrumentor()],
-        is_batching_enabled=False,
-        log_level=os.getenv("RESPAN_LOG_LEVEL", "WARNING"),
-    )
+def runtime(case):
+    marker = os.getenv("RESPAN_EXAMPLE_RUN_ID", "marqo-local-" + uuid.uuid4().hex)
+    metadata = {"run_id": marker, "example_set": "marqo", "example_case": case}
+    provider = TracerProvider()
+    local = InMemorySpanExporter()
+    provider.add_span_processor(Marker(metadata))
+    provider.add_span_processor(SimpleSpanProcessor(local))
+    if os.getenv("RESPAN_EXAMPLE_EXPORT") == "1":
+        from dotenv import load_dotenv
+        from respan_tracing.exporters.respan import RespanSpanExporter
+
+        load_dotenv(
+            Path(
+                os.getenv(
+                    "RESPAN_EXAMPLE_ENV_FILE", str(EXAMPLE_DIR.parents[2] / ".env")
+                )
+            ),
+            override=False,
+        )
+        if not os.getenv("RESPAN_API_KEY"):
+            raise RuntimeError("RESPAN_API_KEY is required for explicit export")
+        exporter = RespanSpanExporter(
+            api_key=os.environ["RESPAN_API_KEY"],
+            endpoint=os.getenv(
+                "RESPAN_TRACE_ENDPOINT", "https://api.respan.ai/api/v2/traces"
+            ),
+        )
+        wire_path = os.getenv("RESPAN_EXAMPLE_WIRE_PATH")
+        if wire_path:
+            actual_post = exporter._session.post
+
+            def observe(url, *args, **kwargs):
+                payload = kwargs.get("json")
+                if payload is None and kwargs.get("data") is not None:
+                    payload = json.loads(kwargs["data"])
+                response = actual_post(url, *args, **kwargs)
+                with open(wire_path, "a", encoding="utf-8") as file:
+                    file.write(
+                        json.dumps(
+                            {"payload": payload, "http_status": response.status_code}
+                        )
+                        + "\n"
+                    )
+                return response
+
+            exporter._session.post = observe
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = MarqoInstrumentor(tracer_provider=provider)
+    instrumentor.activate()
+    attrs = {
+        RESPAN_METADATA: json.dumps(metadata),
+        RESPAN_LOG_TYPE: "workflow",
+        SpanAttributes.TRACELOOP_ENTITY_NAME: case,
+        SpanAttributes.TRACELOOP_ENTITY_PATH: "",
+    }
+    return provider, local, instrumentor, marker, metadata, attrs
+
+
+def run_case(case, action):
+    provider, local, instrumentor, marker, metadata, attributes = runtime(case)
+    try:
+        with (
+            propagate_attributes(metadata=metadata),
+            provider.get_tracer("marqo.examples").start_as_current_span(
+                case, attributes=attributes
+            ),
+        ):
+            result = action(provider, local)
+        provider.force_flush()
+        spans = local.get_finished_spans()
+        path = os.getenv("RESPAN_EXAMPLE_LOCAL_PATH")
+        if path:
+            with open(path, "a", encoding="utf-8") as file:
+                file.writelines(
+                    json.dumps(
+                        {
+                            "case": case,
+                            "run_id": marker,
+                            "name": span.name,
+                            "trace_id": f"{span.context.trace_id:032x}",
+                            "span_id": f"{span.context.span_id:016x}",
+                            "parent_id": f"{span.parent.span_id:016x}"
+                            if span.parent
+                            else None,
+                            "status": span.status.status_code.name,
+                            "status_description": span.status.description,
+                            "events": [
+                                {
+                                    "name": event.name,
+                                    "attributes": dict(event.attributes or {}),
+                                }
+                                for event in span.events
+                            ],
+                            "attributes": dict(span.attributes),
+                        }
+                    )
+                    + "\n"
+                    for span in spans
+                )
+        print(f"{case}: {result}; spans={len(spans)}; run_id={marker}")
+    finally:
+        instrumentor.deactivate()
+        provider.shutdown()
+
+
+from contextlib import contextmanager
 
 
 @contextmanager
-def marqo_client(*, force_loopback: bool = False) -> Iterator[Any]:
+def marqo_client():
     import marqo
+    from _loopback import server
 
-    configured_url = os.getenv("MARQO_URL", "").strip()
-    if configured_url and not force_loopback:
-        options = {"url": configured_url}
-        if api_key := os.getenv("MARQO_API_KEY"):
-            options["api_key"] = api_key
-        yield marqo.Client(**options)
-        return
-
-    with loopback_marqo_url() as url:
-        yield marqo.Client(url=url)
-
-
-def workflow_attributes(workflow_name: str) -> dict[str, object]:
-    run_id = load_example_env()
-    return {
-        "trace_group_identifier": workflow_name,
-        "custom_identifier": f"{workflow_name}-{run_id}",
-        "metadata": {
-            "example_set": EXAMPLE_SET,
-            "workflow_name": workflow_name,
-            "example_run_id": run_id,
-        },
-    }
-
-
-def unique_index_name() -> str:
-    return f"respan-marqo-{uuid4().hex[:8]}"
-
-
-def print_result(workflow_name: str, result: Any) -> None:
-    print(f"\n== {workflow_name} ==")
-    print(json.dumps(result, default=str, indent=2, sort_keys=True))
-
-
-def finish_respan(respan: Respan) -> None:
-    try:
-        respan.flush()
-    finally:
-        respan.shutdown()
+    with server() as (url, requests):
+        yield marqo.Client(url=url), requests
