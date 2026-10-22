@@ -4,6 +4,7 @@ from typing import Literal
 
 from _shared import (
     example_attributes,
+    local_guard,
     make_respan,
     result_summary,
     set_workflow_input,
@@ -33,7 +34,7 @@ def pydantic_parse_workflow(guard: Guard, llm_output: str) -> dict:
 
 def run_pydantic_parse() -> None:
     respan, _ = make_respan("guardrails-pydantic-parse")
-    guard = Guard.for_pydantic(output_class=SupportTicket)
+    guard = local_guard(Guard.for_pydantic(output_class=SupportTicket))
     llm_output = '{"issue": "Shipment arrived late", "urgency": "high"}'
     try:
         with example_attributes("pydantic-parse", WORKFLOW_NAME):

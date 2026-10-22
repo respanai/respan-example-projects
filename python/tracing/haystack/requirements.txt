@@ -1,10 +1,9 @@
-haystack-ai>=2.28.0,<3.0.0
-openinference-instrumentation-haystack>=0.1.36,<0.2.0
--e ../../../../respan/python-sdks/respan-sdk
--e ../../../../respan/python-sdks/respan-tracing
--e ../../../../respan/python-sdks/respan
--e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-openinference
--e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-haystack
+haystack-ai>=3.3.0,<4.0.0
+openinference-instrumentation-haystack>=0.1.44,<0.2.0
+respan-ai>=4.2.3
+respan-instrumentation-openinference>=1.2.5
+respan-instrumentation-haystack>=0.1.0
+opentelemetry-semantic-conventions-ai==0.5.1
 python-dotenv
 
 # Optional dependencies used by the converter examples.
@@ -12,3 +11,6 @@ jq
 markdown-it-py
 mdit-plain
 trafilatura
+
+# Used by TopPSampler and the complex pipeline.
+torch

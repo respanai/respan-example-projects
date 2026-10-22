@@ -18,7 +18,7 @@ _CURRENT_WORKFLOW_SPAN = None
 _CURRENT_ATTRIBUTE_CONTEXT = None
 
 
-def configure_respan(app_name: str, *, use_gateway: bool = False):
+def configure_respan(app_name: str, *, use_gateway: bool = False, config=None):
     """Initialize Respan Haystack instrumentation.
 
     When RESPAN_API_KEY is absent, Respan still initializes local OpenTelemetry
@@ -44,7 +44,9 @@ def configure_respan(app_name: str, *, use_gateway: bool = False):
     from respan import Respan, get_client
     from respan_instrumentation_haystack import HaystackInstrumentor
 
-    instrumentor = HaystackInstrumentor()
+    instrumentor = HaystackInstrumentor(
+        **({"config": config} if config is not None else {})
+    )
     respan = Respan(
         api_key=api_key,
         base_url=base_url,
@@ -198,3 +200,27 @@ def write_sample_files(directory: Path) -> dict[str, Path]:
         encoding="utf-8",
     )
     return files
+
+
+def create_tool_runner(tools):
+    """Use the current Agent-owned executor, or ToolInvoker on Haystack 2."""
+    try:
+        from haystack.components.tools import ToolInvoker
+    except ImportError:
+        from haystack.components.agents import Agent
+        from haystack.components.generators.chat import MockChatGenerator
+
+        return Agent(
+            chat_generator=MockChatGenerator(response_fn=_tool_response),
+            tools=tools,
+            raise_on_tool_invocation_failure=True,
+        )
+    return ToolInvoker(tools)
+
+
+def _tool_response(messages):
+    from haystack.dataclasses import ChatMessage
+
+    if any(message.tool_call_results for message in messages):
+        return ChatMessage.from_assistant("Tool completed")
+    return next(message for message in reversed(messages) if message.tool_calls)

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Dify text completion message traced by Respan."""
 
 from _shared import DifyExampleRuntime, print_result

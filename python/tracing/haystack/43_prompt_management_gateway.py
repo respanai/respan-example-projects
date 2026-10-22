@@ -10,9 +10,8 @@ Haystack trace back to the prompt.
 import json
 import os
 
-from dotenv import find_dotenv, load_dotenv
-
 from _shared import configure_respan, finish_respan, print_result
+from dotenv import find_dotenv, load_dotenv
 
 
 def _prompt_variables() -> dict:

@@ -9,7 +9,11 @@ def run_metadata_router_example():
         from haystack.components.routers import MetadataRouter
 
         rules = {
-            "programming": {"field": "meta.kind", "operator": "==", "value": "programming"},
+            "programming": {
+                "field": "meta.kind",
+                "operator": "==",
+                "value": "programming",
+            },
             "cooking": {"field": "meta.kind", "operator": "==", "value": "cooking"},
         }
         result = MetadataRouter(rules).run(sample_documents())

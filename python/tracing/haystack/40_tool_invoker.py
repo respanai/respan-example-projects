@@ -1,12 +1,11 @@
-"""One-script example for ToolInvoker."""
+"""Tool invocation through the native Agent executor (ToolInvoker on Haystack 2)."""
 
-from _shared import configure_respan, finish_respan, print_result
+from _shared import configure_respan, create_tool_runner, finish_respan, print_result
 
 
 def run_tool_invoker_example():
     respan = configure_respan("haystack-tool-invoker")
     try:
-        from haystack.components.tools import ToolInvoker
         from haystack.dataclasses import ChatMessage
         from haystack.dataclasses.chat_message import ToolCall
         from haystack.tools import Tool
@@ -32,8 +31,8 @@ def run_tool_invoker_example():
                 ToolCall(tool_name="add", arguments={"a": 19, "b": 23}, id="call_1")
             ]
         )
-        result = ToolInvoker([tool]).run([message])
-        print_result("ToolInvoker", result)
+        result = create_tool_runner([tool]).run(messages=[message])
+        print_result("Agent tool invocation", result)
         return result
     finally:
         finish_respan(respan)
