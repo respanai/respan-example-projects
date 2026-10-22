@@ -27,6 +27,14 @@ uv pip install --python .venv/bin/python \
 .venv/bin/python run_all.py
 ```
 
+`run_all.py` generates and prints one `RESPAN_EXAMPLE_RUN_ID` and passes it to
+all seven child scenarios. Set it explicitly when you want a predetermined
+platform audit marker:
+
+```bash
+RESPAN_EXAMPLE_RUN_ID=dify-py-audit-001 .venv/bin/python run_all.py
+```
+
 Primary examples:
 
 - `01_chat_blocking.py` - blocking chat messages
@@ -34,6 +42,8 @@ Primary examples:
 - `03_completion.py` - text completion messages
 - `04_workflow_and_api.py` - workflow run, parameters, conversations, messages, feedback, rename
 - `05_respan_context_and_files.py` - file upload, multimodal file reference, propagated Respan attributes
+- `06_async_chat_and_workflow.py` - refreshed-SDK async chat and workflow streaming (cleanly skips on released 0.1.10)
+- `07_knowledge_workspace.py` - refreshed-SDK Knowledge Base, RAG pipeline, and Workspace operations (cleanly skips on released 0.1.10)
 
 Compatibility aliases are kept for the previous filenames:
 `hello_world.py`, `streaming.py`, `tracing.py`, `gateway.py`, and

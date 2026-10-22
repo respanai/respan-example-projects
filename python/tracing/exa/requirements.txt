@@ -1,0 +1,4 @@
+exa-py==2.20.0
+python-dotenv>=1.0.1
+-e ../../../../respan/python-sdks/respan
+-e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-exa
