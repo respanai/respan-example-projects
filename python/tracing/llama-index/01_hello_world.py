@@ -1,6 +1,6 @@
 """Completion: call the LlamaIndex OpenAI LLM directly."""
 
-from _shared import create_respan, build_llm, print_result, traced_example
+from _shared import build_llm, create_respan, print_result, traced_example
 
 
 def run_completion() -> None:

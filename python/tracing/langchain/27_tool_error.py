@@ -1,8 +1,7 @@
 """Tool error."""
 
-from langchain_core.tools import tool
-
 from _shared import init_telemetry, tracing_config
+from langchain_core.tools import tool
 
 
 @tool
@@ -12,7 +11,7 @@ def failing_lookup(query: str) -> str:
 
 
 def tool_error() -> None:
-    telemetry = init_telemetry("langchain-tool-error")
+    init_telemetry("langchain-tool-error")
     try:
         failing_lookup.invoke(
             {"query": "missing"},
@@ -20,5 +19,7 @@ def tool_error() -> None:
         )
     except ValueError as exc:
         print(f"caught: {exc}")
+
+
 if __name__ == "__main__":
     tool_error()

@@ -1,8 +1,7 @@
 """Chat model with_structured_output."""
 
-from pydantic import BaseModel, Field
-
 from _shared import init_telemetry, make_openai_chat_model, tracing_config
+from pydantic import BaseModel, Field
 
 
 class Movie(BaseModel):
@@ -14,10 +13,12 @@ class Movie(BaseModel):
 
 
 def model_with_structured_output() -> None:
-    telemetry = init_telemetry("langchain-model-with-structured-output")
+    init_telemetry("langchain-model-with-structured-output")
     model = make_openai_chat_model()
     if model is None:
-        print("Set OPENAI_API_KEY or RESPAN_API_KEY to run this provider-backed example.")
+        print(
+            "Set OPENAI_API_KEY or RESPAN_API_KEY to run this provider-backed example."
+        )
         return
 
     structured_model = model.with_structured_output(Movie)
@@ -26,5 +27,7 @@ def model_with_structured_output() -> None:
         config=tracing_config("model_with_structured_output"),
     )
     print(response)
+
+
 if __name__ == "__main__":
     model_with_structured_output()

@@ -1,47 +1,43 @@
-# LlamaIndex Respan Integration Examples
+# LlamaIndex tracing examples
 
-These examples show native LlamaIndex instrumentation with Respan. They route LlamaIndex OpenAI calls through the Respan gateway and load environment variables from this directory or the `respan-example-projects` repo root.
-
-## Setup
+The default suite runs released LlamaIndex core, Workflows, OpenAI LLM, and
+OpenAI embedding code against controlled HTTP responses. It needs no credentials
+and sends no model requests or traces to a service.
 
 ```bash
-cd python/tracing/llama-index
+python -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+RESPAN_EXAMPLE_RUN_ID=llama-index-check python run_all.py
 ```
 
-Set `RESPAN_API_KEY` in `.env`, or use the existing `.env` file at the repo root.
+The twelve scripts cover completion, chat, a full 3072-dimensional embedding,
+a query engine, ReAct tools, function-calling tools, synchronous and asynchronous
+streaming, a standalone workflow, structured prediction, private content,
+controlled provider failure, and sparse embeddings. Dense embedding counts come
+from the controlled provider response. The sparse model uses the SDK's released
+base class with known vectors and reports no invented token usage.
 
-For local SDK development, install the local packages first:
+`run_all.py` continues after failed or timed-out children and reports an aggregate
+exit status. Each initialized Respan instance flushes and shuts down in `finally`.
+The shell's `RESPAN_EXAMPLE_RUN_ID` wins over `.env` values; all environment files
+load with `override=False`.
+
+To export controlled fixture traces, set `RESPAN_LLAMA_INDEX_EXPORT=1` and
+`RESPAN_API_KEY`. The default endpoint is `https://api.respan.ai/api`. Model
+requests still use the HTTP fixtures.
+
+For live Gateway validation of examples 01–10, set `RESPAN_LLAMA_INDEX_LIVE=1`.
+Configure `RESPAN_API_KEY` in the shell or repository `.env`. Optional
+`RESPAN_BASE_URL`, `RESPAN_MODEL`, and `RESPAN_EMBEDDING_MODEL` select the Gateway
+endpoint and models. Live function calling and structured prediction require a
+compatible model. Examples 11 and 12 retain their controlled fixtures. These
+examples do not validate external vector stores, hosted workflows, remote tools,
+or every provider implementation.
+
+For local package development, install the target instrumentation after the
+portable requirements:
 
 ```bash
-pip install -e /path/to/respan/python-sdks/respan \
-            -e /path/to/respan/python-sdks/respan-sdk \
-            -e /path/to/respan/python-sdks/respan-tracing \
-            -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-llama-index \
-            -r requirements.txt
+pip install -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-llama-index
 ```
-
-## Examples
-
-| Example | Description |
-|---------|-------------|
-| `01_hello_world.py` | Call `llama_index.llms.openai.OpenAI.complete` |
-| `02_gateway_query.py` | Call `llama_index.llms.openai.OpenAI.chat` |
-| `03_tracing_workflow.py` | Call `llama_index.embeddings.openai.OpenAIEmbedding.get_text_embedding` |
-| `04_respan_params.py` | Build `SummaryIndex` documents and query the query engine |
-| `05_tool_use_agent.py` | Run `ReActAgent` with a `FunctionTool` |
-
-Each script sets distinct `app_name`, `example_name`, `example_run_id`, `trace_group_identifier`, and `custom_identifier` values so exported results can be traced back to the script that produced them. Set `RESPAN_EXAMPLE_RUN_ID` to apply one exact marker across a validation run. Every script shuts Respan down explicitly after its traced operation so finished spans are flushed before the process exits.
-
-Run any example:
-
-```bash
-python 01_hello_world.py
-```
-
-## Further Reading
-
-- [respan-instrumentation-llama-index](https://pypi.org/project/respan-instrumentation-llama-index/)
-- [respan-ai](https://pypi.org/project/respan-ai/)
-- [LlamaIndex](https://docs.llamaindex.ai/)

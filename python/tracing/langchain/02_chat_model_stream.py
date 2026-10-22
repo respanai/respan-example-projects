@@ -1,12 +1,11 @@
 """Chat model stream."""
 
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
-
 from _shared import init_telemetry, message_text, tracing_config
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 
 def chat_model_stream() -> None:
-    telemetry = init_telemetry("langchain-chat-model-stream")
+    init_telemetry("langchain-chat-model-stream")
     model = FakeListChatModel(responses=["Streaming chat output."])
     chunks = [
         message_text(chunk)
@@ -16,5 +15,7 @@ def chat_model_stream() -> None:
         )
     ]
     print("".join(chunks))
+
+
 if __name__ == "__main__":
     chat_model_stream()

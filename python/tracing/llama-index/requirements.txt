@@ -1,6 +1,8 @@
-python-dotenv
-respan-ai
-respan-instrumentation-llama-index
-llama-index
-llama-index-llms-openai
-llama-index-embeddings-openai
+python-dotenv>=1,<2
+respan-ai>=4,<5
+respan-instrumentation-llama-index>=0.1,<1
+llama-index-core>=0.14.23,<1
+llama-index-workflows>=2.14,<3
+llama-index-llms-openai>=0.8.2,<1
+llama-index-embeddings-openai>=0.7.0,<1
+httpx>=0.28,<1

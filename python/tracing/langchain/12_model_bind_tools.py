@@ -4,7 +4,7 @@ from _shared import fake_tool_calling_model, get_weather, init_telemetry, tracin
 
 
 def model_bind_tools() -> None:
-    telemetry = init_telemetry("langchain-model-bind-tools")
+    init_telemetry("langchain-model-bind-tools")
     model = fake_tool_calling_model(
         tool_name="get_weather",
         args={"city": "Boston"},
@@ -20,5 +20,7 @@ def model_bind_tools() -> None:
         for tool_call in ai_message.tool_calls
     ]
     print([message.content for message in tool_messages])
+
+
 if __name__ == "__main__":
     model_bind_tools()

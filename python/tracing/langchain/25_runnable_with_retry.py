@@ -1,12 +1,11 @@
 """Runnable with_retry."""
 
-from langchain_core.runnables import RunnableLambda
-
 from _shared import init_telemetry, tracing_config
+from langchain_core.runnables import RunnableLambda
 
 
 def runnable_with_retry() -> None:
-    telemetry = init_telemetry("langchain-runnable-with-retry")
+    init_telemetry("langchain-runnable-with-retry")
     attempts = {"count": 0}
 
     def flaky(text: str) -> str:
@@ -21,5 +20,7 @@ def runnable_with_retry() -> None:
         config=tracing_config("runnable_with_retry"),
     )
     print(response)
+
+
 if __name__ == "__main__":
     runnable_with_retry()

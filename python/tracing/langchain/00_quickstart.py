@@ -1,10 +1,10 @@
 """Hello-world quickstart for Respan LangChain instrumentation.
 
 Run:
-    RESPAN_API_KEY=your_respan_api_key python 00_quickstart.py
+    python 00_quickstart.py
 
 The example uses a fake LangChain chat model, so it does not need an OpenAI key.
-When RESPAN_API_KEY is set, the LangChain run is exported to Respan.
+Set RESPAN_EXPORT=1 explicitly to export the controlled run to Respan.
 """
 
 from __future__ import annotations

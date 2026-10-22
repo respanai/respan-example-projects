@@ -2,10 +2,9 @@
 
 import asyncio
 
+from _shared import build_llm, create_respan, print_result, traced_example
 from llama_index.core.agent.workflow import ReActAgent
 from llama_index.core.tools import FunctionTool
-
-from _shared import build_llm, create_respan, print_result, traced_example
 
 
 async def run_tool_use_agent() -> None:

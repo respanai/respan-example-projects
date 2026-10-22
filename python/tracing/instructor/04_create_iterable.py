@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Literal
 
-from _respan_instructor import create_respan_instructor_client
-from respan_tracing import workflow
+from _respan_instructor import create_respan_instructor_client, workflow
+from pydantic import BaseModel
 from respan_tracing.exporters import propagate_attributes
 
 
-class ActionItem(TypedDict):
+class ActionItem(BaseModel):
     owner: str
     task: str
     due: str | None
@@ -38,7 +38,13 @@ def extract_action_items(client, scenario: str) -> list[ActionItem]:
 
 def run_create_iterable_example() -> None:
     respan, client = create_respan_instructor_client(
-        app_name="instructor-create-iterable"
+        app_name="instructor-create-iterable",
+        payload={
+            "owner": "Maya",
+            "task": "Send checklist",
+            "due": "Friday",
+            "status": "new",
+        },
     )
 
     try:
@@ -51,7 +57,7 @@ def run_create_iterable_example() -> None:
         ):
             action_items = extract_action_items(
                 client,
-                "extract three deterministic action items",
+                "extract deterministic action items",
             )
 
         print([dict(item) for item in action_items])

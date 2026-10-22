@@ -1,86 +1,47 @@
-"""Use Instructor validation, retries, hooks, and Respan attributes."""
+"""Validate a response, retry once, and retain user completion hooks."""
 
-from __future__ import annotations
+from typing import Literal
 
-from typing import Literal, TypedDict
-
-from _respan_instructor import create_respan_instructor_client
-from instructor.core.hooks import HookName
-from respan_tracing import workflow
-from respan_tracing.exporters import propagate_attributes
+from _respan_instructor import attributes, create_respan_instructor_client, workflow
+from pydantic import BaseModel, Field
 
 
-class SupportEscalation(TypedDict):
+class SupportEscalation(BaseModel):
     customer: str
     priority: Literal["low", "medium", "high"]
-    sentiment: Literal["positive", "neutral", "negative"]
-    follow_up_hours: int
-    summary: str
+    follow_up_hours: int = Field(gt=0)
 
 
 @workflow(name="instructor_example_02_validation_hooks")
-def classify_support_escalation(client, scenario: str) -> SupportEscalation:
+def classify(client):
     return client.create(
         response_model=SupportEscalation,
         max_retries=2,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "ACME Analytics says production login is failing for "
-                    "their security team before a customer audit. They are "
-                    "frustrated and need a same-day response."
-                ),
-            }
-        ],
+        messages=[{"role": "user", "content": "ACME needs a same-day response."}],
     )
 
 
-def run_validation_hooks_example() -> None:
-    respan, client = create_respan_instructor_client(
-        app_name="instructor-validation-hooks"
+def main():
+    tracing, client = create_respan_instructor_client(
+        app_name="instructor-validation-hooks",
+        payload={"customer": "ACME", "priority": "high", "follow_up_hours": 4},
+        invalid_attempts=1,
+        invalid_field="follow_up_hours",
     )
-    hook_counts = {"completion_kwargs": 0, "completion_response": 0}
-
-    def on_completion_kwargs(**kwargs) -> None:
-        hook_counts["completion_kwargs"] += 1
-        print(
-            {
-                "hook": HookName.COMPLETION_KWARGS.value,
-                "model": kwargs.get("model"),
-                "tool_count": len(kwargs.get("tools", [])),
-            }
-        )
-
-    def on_completion_response(_response) -> None:
-        hook_counts["completion_response"] += 1
-
-    client.on(HookName.COMPLETION_KWARGS, on_completion_kwargs)
-    client.on(HookName.COMPLETION_RESPONSE, on_completion_response)
-
+    responses = []
+    hooks = hasattr(client, "on")
+    if hooks:
+        client.on("completion:response", responses.append)
     try:
-        try:
-            with propagate_attributes(
-                customer_identifier="customer_instructor_example",
-                thread_identifier="instructor_example_02_validation_hooks",
-                metadata={
-                    "example_script": "02_validation_hooks.py",
-                    "instructor_api": "create_hooks",
-                },
-            ):
-                escalation = classify_support_escalation(
-                    client,
-                    "classify a deterministic support escalation",
-                )
-        finally:
-            client.off(HookName.COMPLETION_KWARGS, on_completion_kwargs)
-            client.off(HookName.COMPLETION_RESPONSE, on_completion_response)
-
-        print(dict(escalation))
-        print(hook_counts)
+        with attributes("02_validation_hooks.py"):
+            result = classify(client)
+        print(result.model_dump())
+        print({"completion_responses": len(responses), "native_hooks_available": hooks})
     finally:
-        respan.shutdown()
+        if hooks:
+            client.off("completion:response", responses.append)
+        tracing.shutdown()
 
 
 if __name__ == "__main__":
-    run_validation_hooks_example()
+    main()
