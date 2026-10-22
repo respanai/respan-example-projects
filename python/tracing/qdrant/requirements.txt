@@ -1,4 +1,4 @@
-qdrant-client>=1.19,<2
+qdrant-client>=1.9,<2
 python-dotenv>=1,<2
-respan-ai
-respan-instrumentation-qdrant
+respan-ai>=4.1,<4.2
+respan-instrumentation-qdrant>=0.1.0,<1

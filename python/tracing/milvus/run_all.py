@@ -1,22 +1,19 @@
-from __future__ import annotations
+"""Run every mapped Milvus example in the current environment."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
+from uuid import uuid4
 
-EXAMPLE_DIR = Path(__file__).resolve().parent
-SCRIPTS = [
-    "01_collection_lifecycle.py",
-    "02_data_operations.py",
-    "03_expected_error.py",
-]
-
-
-def main() -> None:
-    for script in SCRIPTS:
-        print(f"\n### Running {script}")
-        subprocess.run([sys.executable, str(EXAMPLE_DIR / script)], check=True)
-
+from _shared import SCENARIOS
 
 if __name__ == "__main__":
-    main()
+    env = dict(os.environ)
+    env.setdefault("RESPAN_EXAMPLE_RUN_ID", "milvus-local-" + uuid4().hex)
+    for scenario in SCENARIOS:
+        subprocess.run(
+            [sys.executable, str(Path(__file__).parent / (scenario + ".py"))],
+            env=env,
+            check=True,
+        )

@@ -1,37 +1,26 @@
-from __future__ import annotations
-
-from _shared import (
-    example_attributes,
-    make_collections,
-    make_custom_identifier,
-    make_respan,
-    workflow_name,
-)
-from respan import workflow
-
-EXAMPLE_NAME = "expected-error"
+import grpc
+from _protocol import Protocol
+from _shared import run_scenario
+from weaviate.exceptions import UnexpectedStatusCodeError, WeaviateQueryError
 
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def expected_error(collection_name: str) -> None:
-    make_collections().delete(collection_name)
-
-
-def run() -> dict[str, str]:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    result = {}
-    try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            try:
-                expected_error("missing-collection")
-            except RuntimeError as exc:
-                result = {"expected_error": type(exc).__name__, "message": str(exc)}
-    finally:
-        respan.shutdown()
-    print(result)
-    return result
+def scenario():
+    with Protocol() as native, native.client() as client:
+        native.grpc_error = grpc.StatusCode.INVALID_ARGUMENT
+        try:
+            client.collections.use("Docs").query.fetch_objects()
+        except WeaviateQueryError:
+            pass
+        else:
+            raise AssertionError("native gRPC error required")
+        try:
+            client.collections.use("Missing").config.get()
+        except UnexpectedStatusCodeError as error:
+            assert error.status_code == 404
+        else:
+            raise AssertionError("native HTTP error required")
+        return {"native_errors": 2}
 
 
 if __name__ == "__main__":
-    run()
+    run_scenario("expected-error", scenario)
