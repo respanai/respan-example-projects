@@ -25,8 +25,16 @@ try {
     runWithWriterWorkflow(respan, workflowName, async () => {
       return await writer.chat.parse({
         model: DEFAULT_CHAT_MODEL,
-        messages: [{ role: "user", content: "Return a JSON task summary for Writer tracing." }],
-        response_format: zodResponseFormat(responseSchema, "writer_trace_summary"),
+        messages: [
+          {
+            role: "user",
+            content: "Return a JSON task summary for Writer tracing.",
+          },
+        ],
+        response_format: zodResponseFormat(
+          responseSchema,
+          "writer_trace_summary",
+        ),
       });
     }),
     workflowName,

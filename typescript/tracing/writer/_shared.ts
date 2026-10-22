@@ -10,7 +10,8 @@ const exampleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(exampleDir, "../../..");
 dotenv.config({ path: path.join(repoRoot, ".env") });
 
-export const RUN_ID = process.env.RESPAN_EXAMPLE_RUN_ID || `writer-ts-${Date.now()}`;
+export const RUN_ID =
+  process.env.RESPAN_EXAMPLE_RUN_ID || `writer-ts-${Date.now()}`;
 export const DEFAULT_CHAT_MODEL = process.env.WRITER_MODEL || "palmyra-x5";
 export const DEFAULT_COMPLETION_MODEL =
   process.env.WRITER_COMPLETION_MODEL || "palmyra-x-003-instruct";
@@ -23,17 +24,24 @@ function envValue(name: string): string | undefined {
   return undefined;
 }
 
-export function createRespan(appName = "writer-typescript-examples"): Respan {
+export function createRespan(
+  appName = "writer-typescript-examples",
+  traceContent = true,
+): Respan {
   const apiKey = envValue("RESPAN_API_KEY");
   if (!apiKey) {
-    throw new Error("Set RESPAN_API_KEY in the respan-example-projects repo root .env file.");
+    throw new Error(
+      "Set RESPAN_API_KEY in the respan-example-projects repo root .env file.",
+    );
   }
 
   return new Respan({
     apiKey,
     baseURL: envValue("RESPAN_BASE_URL"),
     appName,
-    instrumentations: [new WriterInstrumentor({ sdkModule: WriterSDKModule })],
+    instrumentations: [
+      new WriterInstrumentor({ sdkModule: WriterSDKModule, traceContent }),
+    ],
     silenceInitializationMessage: true,
   });
 }
@@ -43,7 +51,9 @@ export function createWriterClient(): Writer {
   const apiKey = envValue("WRITER_API_KEY");
 
   if (liveMode && !apiKey) {
-    throw new Error("Set WRITER_API_KEY in respan-example-projects/.env for live Writer examples.");
+    throw new Error(
+      "Set WRITER_API_KEY in respan-example-projects/.env for live Writer examples.",
+    );
   }
 
   return new Writer({
@@ -68,10 +78,12 @@ export async function runWithWriterWorkflow<T>(
         example: "typescript-writer",
         run_id: RUN_ID,
         workflow_name: workflowName,
-        writer_example_mode: process.env.WRITER_EXAMPLE_MODE === "live" ? "live" : "mock",
+        writer_example_mode:
+          process.env.WRITER_EXAMPLE_MODE === "live" ? "live" : "mock",
       },
     },
-    async () => await respan.withWorkflow({ name: workflowSpanName(workflowName) }, fn),
+    async () =>
+      await respan.withWorkflow({ name: workflowSpanName(workflowName) }, fn),
   );
 }
 
@@ -85,14 +97,25 @@ export async function shutdownRespan(respan: Respan): Promise<void> {
   await respan.shutdown();
 }
 
-export function logExampleResult(workflowName: string, details: Record<string, unknown>): void {
-  console.log(JSON.stringify({ workflowName, runId: RUN_ID, ...details }, null, 2));
+export function logExampleResult(
+  workflowName: string,
+  details: Record<string, unknown>,
+): void {
+  console.log(
+    JSON.stringify({ workflowName, runId: RUN_ID, ...details }, null, 2),
+  );
 }
 
-export async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(`${label} timed out after 60s`)), 60_000);
+    timeout = setTimeout(
+      () => reject(new Error(`${label} timed out after 60s`)),
+      60_000,
+    );
   });
   try {
     return await Promise.race([promise, timeoutPromise]);
@@ -101,9 +124,13 @@ export async function withTimeout<T>(promise: Promise<T>, label: string): Promis
   }
 }
 
-function createWriterMockFetch(): typeof fetch {
-  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const request = input instanceof Request ? input.clone() : new Request(input, init);
+export function createWriterMockFetch(): typeof fetch {
+  return async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const request =
+      input instanceof Request ? input.clone() : new Request(input, init);
     const url = new URL(request.url);
     const body = await readJsonBody(request);
 
@@ -149,7 +176,10 @@ function createWriterMockFetch(): typeof fetch {
       });
     }
 
-    return jsonResponse({ error: { message: `Unhandled mock Writer path: ${url.pathname}` } }, 404);
+    return jsonResponse(
+      { error: { message: `Unhandled mock Writer path: ${url.pathname}` } },
+      404,
+    );
   };
 }
 
@@ -175,7 +205,9 @@ function sseResponse(events: unknown[]): Response {
   const stream = new ReadableStream({
     start(controller) {
       for (const event of events) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+        );
       }
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();
@@ -191,7 +223,9 @@ function sseResponse(events: unknown[]): Response {
 function hasUserText(body: Record<string, any>, text: string): boolean {
   return (body.messages || []).some((message: any) => {
     if (message?.role !== "user") return false;
-    return String(message.content ?? "").toLowerCase().includes(text.toLowerCase());
+    return String(message.content ?? "")
+      .toLowerCase()
+      .includes(text.toLowerCase());
   });
 }
 
@@ -220,7 +254,9 @@ function basicChatResponse(body: Record<string, any>): Record<string, any> {
   };
 }
 
-function structuredChatResponse(body: Record<string, any>): Record<string, any> {
+function structuredChatResponse(
+  body: Record<string, any>,
+): Record<string, any> {
   return {
     ...basicChatResponse(body),
     id: "chatcmpl_writer_structured",
@@ -299,14 +335,22 @@ function chatStreamEvents(body: Record<string, any>): unknown[] {
       object: "chat.completion.chunk",
       created: Math.floor(Date.now() / 1000),
       model,
-      choices: [{ index: 0, finish_reason: null, delta: { role: "assistant", content: "Streaming " } }],
+      choices: [
+        {
+          index: 0,
+          finish_reason: null,
+          delta: { role: "assistant", content: "Streaming " },
+        },
+      ],
     },
     {
       id: "chatcmpl_writer_stream",
       object: "chat.completion.chunk",
       created: Math.floor(Date.now() / 1000),
       model,
-      choices: [{ index: 0, finish_reason: null, delta: { content: "Writer output." } }],
+      choices: [
+        { index: 0, finish_reason: null, delta: { content: "Writer output." } },
+      ],
       usage: { prompt_tokens: 18, completion_tokens: 4, total_tokens: 22 },
     },
     {

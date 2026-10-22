@@ -19,7 +19,10 @@ try {
         model: DEFAULT_CHAT_MODEL,
         messages: [
           { role: "system", content: "You write concise launch notes." },
-          { role: "user", content: "Summarize Writer tracing in one sentence." },
+          {
+            role: "user",
+            content: "Summarize Writer tracing in one sentence.",
+          },
         ],
         max_tokens: 80,
         temperature: 0.2,
