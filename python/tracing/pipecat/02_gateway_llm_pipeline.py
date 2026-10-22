@@ -1,68 +1,54 @@
-"""Run a real Pipecat OpenAI service through the configured Respan gateway."""
-
-from __future__ import annotations
+"""Explicit optional live provider call; controlled tests do not accept gateway routing."""
 
 import asyncio
-from pathlib import Path
+import os
 
-from _pipeline import OfflineLLMService, run_pipeline
-from _shared import (
-    create_respan,
-    execution_id,
-    finish_respan,
-    gateway_config,
-    load_example_env,
-    marker,
-    print_result,
-    workflow_attributes,
-)
+from _pipeline import run
+from _shared import ROOT, attributes, create_respan, finish_respan, marker, print_result
+from dotenv import load_dotenv
 from pipecat.services.openai.llm import OpenAILLMService
-from respan import Respan, workflow
-
-SCRIPT_NAME = Path(__file__).name
-WORKFLOW_NAME = "pipecat_gateway_pipeline"
+from respan import workflow
 
 
-async def main() -> None:
-    load_example_env()
-    run_marker = marker()
-    execution = execution_id()
-    config = gateway_config()
-    mode = "live" if config else "deterministic-fallback"
-    respan = create_respan(WORKFLOW_NAME, run_marker)
-    try:
+async def main():
+    if os.getenv("RESPAN_PIPECAT_LIVE") != "1":
+        print("SKIP live provider: set RESPAN_PIPECAT_LIVE=1 explicitly.")
+        return
+    load_dotenv(ROOT / ".env", override=False)
+    if not os.getenv("PIPECAT_PROVIDER_API_KEY"):
+        raise RuntimeError("PIPECAT_PROVIDER_API_KEY required for explicit live call")
+    run_id = marker()
+    sdk = create_respan("live-provider", run_id)
 
-        @workflow(name=WORKFLOW_NAME)
-        async def trace_gateway(prompt: str) -> dict[str, str]:
-            service = (
-                OpenAILLMService(
-                    api_key=config["api_key"],
-                    base_url=config["base_url"],
-                    settings=OpenAILLMService.Settings(
-                        model=config["model"], max_completion_tokens=32
-                    ),
+    @workflow(name="pipecat_live_provider")
+    async def scenario(prompt):
+        service = OpenAILLMService(
+            api_key=os.environ["PIPECAT_PROVIDER_API_KEY"],
+            base_url=os.getenv("PIPECAT_PROVIDER_BASE_URL"),
+            settings=OpenAILLMService.Settings(
+                model=os.getenv("PIPECAT_PROVIDER_MODEL", "gpt-4.1-nano")
+            ),
+        )
+        try:
+            collector, _worker = await run(
+                service=service, messages=[{"role": "user", "content": prompt}]
+            )
+            return {
+                "text": "".join(
+                    f.text
+                    for f in collector.frames
+                    if type(f).__name__ == "LLMTextFrame"
                 )
-                if config
-                else OfflineLLMService(response="Pipecat gateway fallback is active.")
-            )
-            result = await run_pipeline(
-                service,
-                prompt=prompt,
-                conversation_id=f"gateway-{execution}",
-            )
-            if result.error:
-                raise RuntimeError(result.error)
-            return {"response": result.text, "status": "completed"}
+            }
+        finally:
+            await service._client.close()
 
-        with Respan.propagate_attributes(
-            **workflow_attributes(WORKFLOW_NAME, run_marker, execution, mode=mode)
-        ):
-            result = await trace_gateway(
-                "Reply with exactly: Pipecat gateway tracing works."
-            )
-        print_result(SCRIPT_NAME, result, run_marker)
+    try:
+        with attributes("live-provider", run_id):
+            result = await scenario("Say a brief hello.")
+        print_result("live-provider", result, run_id)
     finally:
-        finish_respan(respan)
+        finish_respan(sdk)
 
 
 if __name__ == "__main__":

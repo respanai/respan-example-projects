@@ -60,7 +60,7 @@ def workflow_attributes(workflow_name: str, script_name: str) -> dict[str, objec
     """Return stable grouping plus a unique root identifier for one example."""
     run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID", DEFAULT_RUN_ID)
     return {
-        "trace_group_identifier": workflow_name,
+        "trace_group_identifier": f"{workflow_name}-{run_id}",
         "custom_identifier": f"{workflow_name}-{uuid4().hex[:8]}",
         "metadata": {
             "example": "mirascope",
@@ -242,12 +242,13 @@ def create_live_model() -> llm.Model:
 
 
 def live_example_enabled() -> bool:
-    """Allow the live gateway call to be disabled explicitly."""
-    load_example_env()
-    return os.getenv("RESPAN_MIRASCOPE_RUN_LIVE", "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
+    """Require an explicit opt-in for paid provider inference."""
+    load_dotenv(REPO_ROOT / ".env", override=False)
+    return os.getenv("RESPAN_MIRASCOPE_RUN_LIVE", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 

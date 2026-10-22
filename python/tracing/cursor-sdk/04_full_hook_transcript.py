@@ -26,7 +26,7 @@ def main() -> None:
             EXAMPLE_NAME,
             run_id,
             "afterShellExecution",
-            command="rg -n \"ArgumentParser|--verbose\" .",
+            command='rg -n "ArgumentParser|--verbose" .',
             output="cli.py:10:parser = argparse.ArgumentParser()",
             duration=150,
         ),

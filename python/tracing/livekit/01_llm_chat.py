@@ -1,33 +1,22 @@
-from __future__ import annotations
+"""Real released native LLMStream.collect and source usage."""
 
 import asyncio
 
-from _shared import (
-    MockLiveKitLLM,
-    chat_context,
-    example_attributes,
-    finish_respan,
-    make_custom_identifier,
-    make_respan,
-    print_result,
-    print_start,
-)
+from _shared import FixtureLLM, Tracing, chat_context, native_job
 
 
-async def main() -> None:
-    example_name = "01-llm-chat"
-    custom_identifier = make_custom_identifier(example_name)
-    respan = make_respan(example_name)
+async def main():
+    tracing = Tracing("native-chat")
     try:
-        print_start(example_name, custom_identifier)
-        model = MockLiveKitLLM()
-        with example_attributes(example_name, custom_identifier):
-            response = await model.chat(
-                chat_ctx=chat_context("Summarize LiveKit in one sentence."),
-            ).collect()
-        print_result("response", response.model_dump())
+        with native_job():
+            result = await FixtureLLM().chat(chat_ctx=chat_context()).collect()
+            assert (
+                result.text == "native LiveKit output"
+                and result.usage.total_tokens == 18
+            )
+        print("native collect value and source counts preserved")
     finally:
-        finish_respan(respan)
+        tracing.finish()
 
 
 if __name__ == "__main__":

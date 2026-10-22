@@ -1,4 +1,4 @@
 mirascope[openai]>=2.5.0,<3.0.0
-python-dotenv>=1.0.0
+python-dotenv>=1.0.1
 respan-ai>=4.1.0
 respan-instrumentation-mirascope>=0.1.0

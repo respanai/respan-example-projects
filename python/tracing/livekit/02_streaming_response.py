@@ -1,39 +1,31 @@
-from __future__ import annotations
+"""Native iteration, early close and caller context remain unchanged."""
 
 import asyncio
 
-from _shared import (
-    MockLiveKitLLM,
-    chat_context,
-    example_attributes,
-    finish_respan,
-    make_custom_identifier,
-    make_respan,
-    print_result,
-    print_start,
-)
+from _shared import FixtureLLM, Tracing, chat_context, native_job
+from opentelemetry import trace
 
 
-async def main() -> None:
-    example_name = "02-streaming-response"
-    custom_identifier = make_custom_identifier(example_name)
-    respan = make_respan(example_name)
+async def main():
+    tracing = Tracing("streaming-and-close")
     try:
-        print_start(example_name, custom_identifier)
-        model = MockLiveKitLLM()
-        chunks: list[str] = []
-        with example_attributes(example_name, custom_identifier):
-            stream = model.chat(
-                chat_ctx=chat_context("Stream a short LiveKit reply."),
-                extra_kwargs={"scenario": "stream"},
-            )
-            async with stream:
-                async for chunk in stream:
-                    if chunk.delta and chunk.delta.content:
-                        chunks.append(chunk.delta.content)
-        print_result("streamed_text", "".join(chunks))
+        with native_job() as parent:
+            stream = FixtureLLM().chat(chat_ctx=chat_context())
+            assert stream.__aiter__() is stream
+            pieces = [
+                chunk.delta.content or "" async for chunk in stream if chunk.delta
+            ]
+            text = "".join(pieces)
+            assert text == "native LiveKit output"
+            assert trace.get_current_span() is parent
+            early = FixtureLLM(finish=asyncio.Event()).chat(chat_ctx=chat_context())
+            first = await early.__anext__()
+            assert first.delta.content == "native "
+            assert await early.aclose() is None
+            assert trace.get_current_span() is parent
+        print("native stream and early close preserved")
     finally:
-        finish_respan(respan)
+        tracing.finish()
 
 
 if __name__ == "__main__":
