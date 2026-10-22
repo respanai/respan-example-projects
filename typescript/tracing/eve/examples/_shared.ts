@@ -2,15 +2,23 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { Client, type HandleMessageStreamEvent } from "eve/client";
+import { Client } from "eve/client";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { EXAMPLE_RUN_ID } from "../_env.js";
 
-type EveEventType = HandleMessageStreamEvent["type"];
+type EveEventType = string;
+interface EveEvent {
+  readonly type: string;
+  readonly data?: Record<string, unknown>;
+}
 
 const EXAMPLE_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const EVE_BIN = fileURLToPath(
-  new URL("../node_modules/eve/bin/eve.js", import.meta.url),
+const EVE_BIN = join(
+  dirname(createRequire(import.meta.url).resolve("eve/package.json")),
+  "bin/eve.js",
 );
+const APP_ROOT = join(EXAMPLE_ROOT, ".respan-eve/app");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.EVE_EXAMPLE_PORT ?? 23821);
 const SERVER_URL = "http://" + HOST + ":" + PORT;
@@ -65,10 +73,10 @@ export async function runCase(
     readonly needsChildSession?: boolean;
   },
 ): Promise<ExampleResult> {
-  const session = client.session();
+  const session = await createSession(client);
   const response = await session.send(prompt);
   const result = await response.result();
-  const eventTypes = result.events.map((event) => event.type);
+  const eventTypes = result.events.map((event: EveEvent) => event.type);
   const childSessionIds = collectChildSessionIds(result.events);
 
   assert.equal(result.status, "waiting");
@@ -98,12 +106,16 @@ export async function runCase(
 }
 
 function collectChildSessionIds(
-  events: readonly HandleMessageStreamEvent[],
+  events: readonly EveEvent[],
 ): readonly string[] {
   return events.flatMap((event) =>
-    event.type === "subagent.called"
+    event.type === "subagent.called" &&
+    typeof event.data?.childSessionId === "string"
       ? [event.data.childSessionId]
-      : [],
+      : event.type === "agent.started" &&
+          typeof event.data?.sessionId === "string"
+        ? [event.data.sessionId]
+        : [],
   );
 }
 
@@ -112,11 +124,11 @@ function startEveServer(): ChildProcessWithoutNullStreams {
     process.execPath,
     [EVE_BIN, "start", "--host", HOST, "--port", String(PORT)],
     {
-      cwd: EXAMPLE_ROOT,
+      cwd: APP_ROOT,
       env: {
         ...process.env,
         RESPAN_EXAMPLE_RUN_ID: EXAMPLE_RUN_ID,
-        RESPAN_SPAN_NAME_STYLE: "semantic",
+        EVE_TELEMETRY_DISABLED: "1",
       },
       stdio: ["pipe", "pipe", "pipe"],
     },
@@ -127,6 +139,12 @@ function startEveServer(): ChildProcessWithoutNullStreams {
     child.stderr.pipe(process.stderr);
   }
   return child;
+}
+
+export async function createSession(client: Client): Promise<any> {
+  if ("sessions" in client)
+    return (await (client as any).sessions.create()).session;
+  return (client as any).session();
 }
 
 async function waitForHealth(

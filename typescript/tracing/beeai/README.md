@@ -1,13 +1,9 @@
-# BeeAI TypeScript Tracing Examples
+# BeeAI TypeScript tracing examples
 
-Runnable examples for tracing BeeAI Framework with `@respan/instrumentation-beeai`.
-
-The scripts load environment variables from the repository root `.env` file, then route BeeAI OpenAI adapter calls through the Respan OpenAI-compatible gateway.
-
-The runtime passes both the application-loaded `beeai-framework` module and its
-top-level `BeeAIInstrumentation` constructor to `BeeAIInstrumentor`. Keeping
-those in the same dependency realm prevents linked workspace installs from
-failing the upstream serializer's `instanceof ChatModel` checks.
+Use BeeAI Framework 0.1.31 with `@respan/instrumentation-beeai`. The instrumentor
+captures native agents, models, tools, streams, structured output, and embeddings.
+The manifest uses published Respan 2.5.0, tracing 1.6.1, and SDK 1.3.4, with only
+the BeeAI instrumentor linked to the sibling SDK repository.
 
 ## Setup
 
@@ -16,25 +12,39 @@ cd typescript/tracing/beeai
 npm install
 ```
 
-Required variables in `respan-example-projects/.env`:
+Set `RESPAN_API_KEY` in the repository root `.env` file or your environment.
+`RESPAN_BASE_URL` optionally selects the trace destination.
 
-| Variable | Description |
-| --- | --- |
-| `RESPAN_API_KEY` | Sends traces to Respan. |
-| `RESPAN_GATEWAY_API_KEY` | Routes LLM calls through the Respan gateway. Falls back to `RESPAN_API_KEY`. |
-| `RESPAN_GATEWAY_BASE_URL` | OpenAI-compatible gateway base URL. Defaults to `https://api.respan.ai/api`. |
-| `RESPAN_MODEL` | Model routed through the gateway. Defaults to `gpt-4o`. |
+The live chat and agent examples also use `RESPAN_GATEWAY_API_KEY` (defaults to
+`RESPAN_API_KEY`), `RESPAN_GATEWAY_BASE_URL` (defaults to
+`https://api.respan.ai/api`), and `RESPAN_MODEL` (defaults to `gpt-4o`).
 
-## Scripts
+## Run
 
 ```bash
 npm run basic
 npm run tools
+npm run native
 npm run all
 ```
 
-`01_basic_chat.ts` creates a `beeai_basic_chat.workflow` trace with one BeeAI OpenAI chat model call.
+- `basic`: one live BeeAI OpenAI chat request through the Respan gateway.
+- `tools`: a live `RequirementAgent` using the calculator tool.
+- `native`: eight controlled workflows using the released BeeAI OpenAI adapters
+  with deterministic HTTP responses. Covers 75 messages, complete tool schemas,
+  historical and current tool calls, agent and tool IDs, streaming callbacks,
+  a 5001-dimensional vector, false/zero/empty tool outputs, structured output,
+  provider errors, and content privacy. Provider calls stay within the controlled
+  fetch boundary; traces are exported to the configured Respan destination.
 
-`02_tool_calling_agent.ts` creates a `beeai_tool_calling_agent.workflow` trace with a BeeAI tool-calling agent and calculator tool.
+BeeAI 0.1.31's RequirementAgent imports `uuid` without declaring it. The example
+manifest includes `uuid` so a clean install can run that native agent.
 
-Each script sets `trace_group_identifier` and `metadata.workflow_name` to its workflow name, so the traces can be filtered by workflow name in Respan. Set `RESPAN_EXAMPLE_RUN_ID` to control the shared run id; otherwise the scripts generate one.
+The controlled suite also adapts to BeeAI 0.1.9's `ToolCallingAgent`, tool-result
+shape, and structured generation API for minimum-version audits.
+
+Set `RESPAN_EXAMPLE_RUN_ID` to correlate the complete run. Every workflow carries
+that value as `custom_identifier` and `metadata.run_id`, plus its workflow name.
+For long indexed message histories, configure the OpenTelemetry
+`OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT` above the default 128 attributes; the full
+history remains available in the entity input.

@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "eve build",
+    "build": "tsx scripts/prepare.ts",
     "info": "eve info",
     "typecheck": "tsc --noEmit",
     "example:basic": "npm run build && tsx examples/01_basic_turn.ts",
@@ -17,13 +17,14 @@
   },
   "dependencies": {
     "@respan/instrumentation-eve": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-eve",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "ai": "7.0.26",
+    "@respan/respan-sdk": "^1.2.0",
+    "@respan/tracing": "^1.6.0",
+    "ai": "7.0.136",
     "dotenv": "^17.2.3",
-    "eve": "0.26.1",
-    "zod": "4.4.3"
+    "eve": "0.75.1",
+    "zod": "4.4.3",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
+    "just-bash": "3.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
