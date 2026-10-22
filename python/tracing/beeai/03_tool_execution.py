@@ -2,14 +2,13 @@
 
 import asyncio
 
-from respan import workflow
-
 from _shared import create_respan, example_attributes
+from respan import workflow
 
 WORKFLOW_NAME = "BeeAI Tool Execution Example"
 respan = create_respan("beeai-tool-execution")
 
-from beeai_framework.tools import tool  # noqa: E402
+from beeai_framework.tools import tool
 
 
 @tool(

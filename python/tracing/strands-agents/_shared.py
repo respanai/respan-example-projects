@@ -1,11 +1,13 @@
-"""Shared helpers for Strands Agents tracing examples."""
+"""Shared setup; controlled fixtures run without credentials by default."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
+from _fixture import create_fixture_model
 from dotenv import load_dotenv
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan import Respan
 from respan_instrumentation_strands_agents import StrandsAgentsInstrumentor
 from strands.models.openai import OpenAIModel
@@ -19,23 +21,24 @@ def load_example_environment() -> tuple[str, str, str]:
     load_dotenv(REPO_ROOT / ".env", override=False)
     if invocation_marker:
         os.environ["RESPAN_EXAMPLE_RUN_ID"] = invocation_marker
-    respan_api_key = os.environ["RESPAN_API_KEY"]
-    respan_base_url = os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api").rstrip(
-        "/"
+    return (
+        os.environ["RESPAN_API_KEY"],
+        os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api").rstrip("/"),
+        os.getenv("RESPAN_STRANDS_MODEL", "gpt-4o-mini"),
     )
-    model_id = os.getenv("RESPAN_STRANDS_MODEL", "gpt-4o-mini")
-    return respan_api_key, respan_base_url, model_id
 
 
 def create_gateway_model(
     *, model_id: str | None = None, base_url: str | None = None
 ) -> OpenAIModel:
-    respan_api_key, respan_base_url, default_model_id = load_example_environment()
+    if os.getenv("RESPAN_STRANDS_LIVE") != "1":
+        return create_fixture_model(fail=base_url is not None)
+    key, url, default_model = load_example_environment()
     return OpenAIModel(
-        model_id=model_id or default_model_id,
+        model_id=model_id or default_model,
         client_args={
-            "api_key": respan_api_key,
-            "base_url": base_url or respan_base_url,
+            "api_key": key,
+            "base_url": base_url or url,
             "max_retries": 0,
             "timeout": 15,
         },
@@ -43,21 +46,37 @@ def create_gateway_model(
 
 
 def create_respan(example_name: str, run_id: str) -> Respan:
-    respan_api_key, respan_base_url, _ = load_example_environment()
-    return Respan(
-        api_key=respan_api_key,
-        base_url=respan_base_url,
-        app_name=f"strands-agents-{example_name}",
-        instrumentations=[StrandsAgentsInstrumentor()],
-        metadata={
-            "example": example_name,
-            "run_id": run_id,
-            "example_run_id": run_id,
-            "example_set": "strands-agents",
-            "framework": "strands-agents",
-        },
-        environment="examples",
+    exporting = (
+        os.getenv("RESPAN_STRANDS_EXPORT") == "1"
+        or os.getenv("RESPAN_STRANDS_LIVE") == "1"
     )
+    key, url, _ = (
+        load_example_environment()
+        if exporting
+        else (None, "https://api.respan.ai/api", None)
+    )
+    previous_key = os.environ.pop("RESPAN_API_KEY", None) if not exporting else None
+    try:
+        respan = Respan(
+            api_key=key,
+            base_url=url,
+            app_name=f"strands-agents-{example_name}",
+            instrumentations=[StrandsAgentsInstrumentor()],
+            metadata={
+                "example": example_name,
+                "run_id": run_id,
+                "example_run_id": run_id,
+                "example_set": "strands-agents",
+                "framework": "strands-agents",
+            },
+            environment="examples",
+        )
+        if not exporting:
+            respan.telemetry.add_processor(exporter=InMemorySpanExporter())
+        return respan
+    finally:
+        if previous_key is not None:
+            os.environ["RESPAN_API_KEY"] = previous_key
 
 
 def new_run_id(example_name: str) -> str:

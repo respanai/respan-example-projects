@@ -13,6 +13,12 @@ SCRIPTS = (
     "02_tool_calling_agent.py",
     "03_expected_tool_failure.py",
     "04_streaming_agent.py",
+    "05_streamed_model_and_tools.py",
+    "06_continuation_and_full_result.py",
+    "07_managed_agent.py",
+    "08_planning_and_parallel_tools.py",
+    "09_privacy_policy.py",
+    "10_model_failure_and_stream_close.py",
 )
 
 
@@ -37,6 +43,9 @@ def main() -> None:
             continue
         if result.returncode:
             failures.append(f"{script}: exit {result.returncode}")
+    print(
+        f"scenarios={len(SCRIPTS)} failures={len(failures)} run_id={env['RESPAN_EXAMPLE_RUN_ID']}"
+    )
     if failures:
         raise SystemExit("; ".join(failures))
 

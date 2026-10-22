@@ -2,21 +2,19 @@
 
 import asyncio
 
+from _shared import create_respan, example_attributes, get_chat_model
 from respan import workflow
-
-from _shared import create_respan, example_attributes, get_default_model
 
 WORKFLOW_NAME = "BeeAI Requirement Agent Example"
 respan = create_respan("beeai-requirement-agent")
 
-from beeai_framework.agents.requirement import RequirementAgent  # noqa: E402
-from beeai_framework.backend import ChatModel  # noqa: E402
+from beeai_framework.agents.requirement import RequirementAgent
 
 
 @workflow(name=WORKFLOW_NAME)
 async def run_requirement_agent() -> str:
     agent = RequirementAgent(
-        llm=ChatModel.from_name(get_default_model()),
+        llm=get_chat_model(mode="agent"),
         role="observability assistant",
         instructions=(
             "Answer in one concise paragraph. Focus on practical agent "

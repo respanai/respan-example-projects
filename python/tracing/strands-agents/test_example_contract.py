@@ -41,7 +41,7 @@ def test_shell_marker_wins_over_dotenv(monkeypatch):
 
 
 def test_all_examples_have_semantic_workflow_inputs_and_final_shutdown():
-    assert len(SCRIPTS) == 5
+    assert len(SCRIPTS) == 11
     for script in SCRIPTS:
         source = script.read_text()
         tree = ast.parse(source)

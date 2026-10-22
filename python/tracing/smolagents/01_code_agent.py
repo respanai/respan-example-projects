@@ -27,8 +27,9 @@ def get_city_population(city: str) -> str:
 def execute_code_agent_workflow(prompt: str) -> str:
     agent = CodeAgent(
         tools=[get_city_population],
-        model=build_model(),
+        model=build_model("code"),
         max_steps=3,
+        verbosity_level=0,
     )
     result = agent.run(prompt)
     print(result)

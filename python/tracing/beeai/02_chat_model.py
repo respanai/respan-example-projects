@@ -2,19 +2,18 @@
 
 import asyncio
 
+from _shared import create_respan, example_attributes, get_chat_model
 from respan import workflow
-
-from _shared import create_respan, example_attributes, get_default_model
 
 WORKFLOW_NAME = "BeeAI Chat Model Example"
 respan = create_respan("beeai-chat-model")
 
-from beeai_framework.backend import ChatModel, UserMessage  # noqa: E402
+from beeai_framework.backend import UserMessage
 
 
 @workflow(name=WORKFLOW_NAME)
 async def run_chat_model() -> str:
-    model = ChatModel.from_name(get_default_model())
+    model = get_chat_model()
     response = await model.run(
         [
             UserMessage(

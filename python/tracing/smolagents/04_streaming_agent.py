@@ -10,7 +10,9 @@ WORKFLOW_NAME = "smolagents_streaming_agent_workflow"
 
 @workflow(name=WORKFLOW_NAME)
 def execute_streaming_agent(prompt: str) -> str:
-    agent = ToolCallingAgent(tools=[], model=build_model(), max_steps=2)
+    agent = ToolCallingAgent(
+        tools=[], model=build_model("stream"), max_steps=2, verbosity_level=0
+    )
     result = ""
     for chunk in agent.run(prompt, stream=True):
         value = getattr(chunk, "output", None)

@@ -10,7 +10,16 @@ from pathlib import Path
 from dotenv import load_dotenv
 from respan import Respan, propagate_attributes
 from respan_instrumentation_smolagents import SmolagentsInstrumentor
-from smolagents import LiteLLMModel
+from smolagents import Model
+from smolagents.models import (
+    ChatMessage,
+    ChatMessageStreamDelta,
+    ChatMessageToolCall,
+    ChatMessageToolCallFunction,
+    ChatMessageToolCallStreamDelta,
+    MessageRole,
+)
+from smolagents.monitoring import TokenUsage
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(REPO_ROOT / ".env", override=False)
@@ -41,20 +50,143 @@ def _gateway_model_id() -> str:
     return f"openai/{model}"
 
 
-def build_model() -> LiteLLMModel:
-    gateway_api_key = _required_env("RESPAN_GATEWAY_API_KEY", "RESPAN_API_KEY")
-    gateway_base_url = os.getenv(
-        "RESPAN_GATEWAY_BASE_URL",
-        os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL),
+def response(content=None, *, calls=None) -> ChatMessage:
+    # This is an explicit controlled model boundary, not provider usage evidence.
+    return ChatMessage(
+        role=MessageRole.ASSISTANT,
+        content=content,
+        tool_calls=calls,
+        token_usage=TokenUsage(input_tokens=11, output_tokens=7),
+        raw={
+            "usage": {
+                "prompt_tokens_details": {"cached_tokens": 3},
+                "completion_tokens_details": {"reasoning_tokens": 2},
+            }
+        },
     )
 
-    os.environ["OPENAI_API_KEY"] = gateway_api_key
-    os.environ["OPENAI_BASE_URL"] = gateway_base_url
+
+def tool_call(name: str, arguments: dict, identifier: str) -> ChatMessageToolCall:
+    return ChatMessageToolCall(
+        id=identifier,
+        type="function",
+        function=ChatMessageToolCallFunction(name=name, arguments=arguments),
+    )
+
+
+class FixtureModel(Model):
+    """Released Model interface with deterministic responses and usage fixtures."""
+
+    provider = "fixture"
+
+    def __init__(self, replies):
+        super().__init__(model_id="fixture-smolagents")
+        self.replies = iter(replies)
+        self.received_messages = []
+
+    def generate(self, messages, tools_to_call_from=None, **kwargs):
+        self.received_messages.append(messages)
+        value = next(self.replies)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def generate_stream(self, messages, tools_to_call_from=None, **kwargs):
+        message = self.generate(
+            messages, tools_to_call_from=tools_to_call_from, **kwargs
+        )
+        if message.content:
+            middle = max(1, len(message.content) // 2)
+            yield ChatMessageStreamDelta(content=message.content[:middle])
+            yield ChatMessageStreamDelta(content=message.content[middle:])
+        for index, call in enumerate(message.tool_calls or []):
+            import json
+
+            arguments = json.dumps(call.function.arguments)
+            middle = max(1, len(arguments) // 2)
+            yield ChatMessageStreamDelta(
+                tool_calls=[
+                    ChatMessageToolCallStreamDelta(
+                        index=index,
+                        id=call.id,
+                        type="function",
+                        function=ChatMessageToolCallFunction(
+                            name=call.function.name, arguments=arguments[:middle]
+                        ),
+                    )
+                ]
+            )
+            yield ChatMessageStreamDelta(
+                tool_calls=[
+                    ChatMessageToolCallStreamDelta(
+                        index=index,
+                        function=ChatMessageToolCallFunction(
+                            name="", arguments=arguments[middle:]
+                        ),
+                    )
+                ]
+            )
+        yield ChatMessageStreamDelta(token_usage=message.token_usage)
+
+
+def build_model(scenario: str = "code"):
+    mode = os.getenv("SMOLAGENTS_MODEL_MODE", "fixture")
+    if mode == "fixture":
+        if scenario == "code":
+            return FixtureModel(
+                [
+                    response(
+                        "Thought: use the local fact.\n<code>final_answer(get_city_population('Paris'))</code>"
+                    )
+                ]
+            )
+        if scenario == "invoice":
+            return FixtureModel(
+                [
+                    response(
+                        calls=[
+                            tool_call(
+                                "calculate_invoice_total",
+                                {"unit_price_usd": 9, "quantity": 7},
+                                "invoice-1",
+                            )
+                        ]
+                    ),
+                    response(
+                        calls=[
+                            tool_call(
+                                "final_answer",
+                                {"answer": "7 items at $9 each cost $63."},
+                                "invoice-answer",
+                            )
+                        ]
+                    ),
+                ]
+            )
+        return FixtureModel(
+            [
+                response(
+                    calls=[
+                        tool_call(
+                            "final_answer",
+                            {"answer": "streamed smolagents tracing works"},
+                            "stream-answer",
+                        )
+                    ]
+                )
+            ]
+        )
+    if mode != "live":
+        raise ValueError("SMOLAGENTS_MODEL_MODE must be fixture or live")
+    from smolagents import LiteLLMModel
 
     return LiteLLMModel(
         model_id=_gateway_model_id(),
-        api_key=gateway_api_key,
-        api_base=gateway_base_url,
+        api_key=_required_env("RESPAN_GATEWAY_API_KEY", "RESPAN_API_KEY"),
+        api_base=os.getenv(
+            "RESPAN_GATEWAY_BASE_URL",
+            os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL),
+        ),
     )
 
 
@@ -82,6 +214,7 @@ def build_respan(example_name: str, workflow_name: str) -> Respan:
         },
         environment="examples",
         is_batching_enabled=False,
+        log_level="WARNING",
     )
 
 

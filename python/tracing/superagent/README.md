@@ -1,42 +1,34 @@
-# Superagent Tracing Examples
+# Superagent tracing examples
 
-These examples trace the Superagent `safety-agent` SDK with
-`respan-instrumentation-superagent`.
-
-Each script wraps the run in a Respan workflow whose name matches the script
-filename, so the platform result is easy to map back to the example.
-
-## Setup
-
-Install portable registry requirements and run the complete set with one exact
-marker:
+The eight scripts exercise `safety-agent` **0.1.7** with the paired Respan
+instrumentation. By default, the real SDK uses controlled provider HTTP,
+URL-fetch and Daytona boundaries. Provider and sandbox services are not contacted.
 
 ```bash
 pip install -r requirements.txt
-RESPAN_EXAMPLE_RUN_ID=superagent-check python run_all.py
+RESPAN_API_KEY=... RESPAN_EXAMPLE_RUN_ID=superagent-check python run_all.py
 ```
 
-For local package development, link the package after installing requirements:
+The repository `.env` loads with `override=False`, preserving shell settings.
+Set `RESPAN_BASE_URL` to change the trace export destination. Use the companion
+adapter branch/wheel until its release is published.
 
-```bash
-pip install -e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-superagent
-```
+| Script | Coverage |
+| --- | --- |
+| 01_guard | Native guard chunk aggregation, structured result and actual zero usage |
+| 02_redact | Typed options, entities and rewrite; complete returned result |
+| 03_workflow | Nested workflow/task/guard/redact ancestry and metadata |
+| 04_scan | Actual SDK scan options and typed response through a controlled Daytona boundary |
+| 05_expected_error | Controlled HTTP401 and native input-validation errors |
+| 06_content_policy | Environment/context privacy and suppression |
+| 07_input_types | Image bytes and public URL processing through controlled boundaries |
+| 08_fallback | Current native provider retry/fallback |
 
-The scripts load the `.env` file from the `respan-example-projects` repo root.
-They use `RESPAN_API_KEY`, `RESPAN_BASE_URL`, `RESPAN_GATEWAY_API_KEY`,
-`RESPAN_GATEWAY_BASE_URL`, and `RESPAN_MODEL` when present.
+The adapter also supports 0.1.5, whose SDK lacks the fallback-model API.
+Content capture is bounded and credentials are redacted. Guardrail/tool usage
+stays SDK operation metadata; it is not canonical LLM usage.
 
-`04_scan.py` requires `DAYTONA_API_KEY` and is skipped when that key is absent.
-
-## Examples
-
-| Script | Description |
-| ------ | ----------- |
-| `01_guard.py` | Runs and traces a Superagent guardrail check. |
-| `02_redact.py` | Runs and traces a PII redaction operation. |
-| `03_workflow.py` | Nests Superagent operations under Respan workflow/task spans. |
-| `04_scan.py` | Runs a repository scan when Daytona credentials are available. |
-| `05_expected_error.py` | Records a bounded provider/model error. |
-
-Every example preserves an externally supplied marker, records both `run_id`
-and `example_run_id`, and flushes and shuts down Respan in `finally`.
+`SUPERAGENT_EXAMPLE_MODE=live` replaces fixture boundaries with real clients and
+requires provider/Superagent keys and Daytona credentials for scanning. The
+controlled error and synthetic fallback scenarios target fixture mode. Live
+provider/sandbox acceptance is separate from the deterministic suite.

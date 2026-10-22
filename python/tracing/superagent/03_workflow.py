@@ -1,64 +1,44 @@
-"""Trace Superagent operations inside Respan workflow and task spans."""
+"""Released Superagent SDK scenario: workflow."""
 
 import asyncio
 from pathlib import Path
 
-from _shared import (
-    configure_environment,
-    create_respan,
-    create_superagent_client,
-    example_marker,
-    finish_respan,
-)
-from respan import propagate_attributes, task, workflow
+from _shared import client_context, create_respan, example_marker, finish_respan
+from respan import propagate_attributes, workflow
 
 SCRIPT_NAME = Path(__file__).name
 
 
-@task(name="safety_guard")
-async def safety_guard(model: str, text: str) -> str:
-    client = create_superagent_client()
-    result = await client.guard(input=text, model=model, chunk_size=0)
-    return result.classification
+@workflow(name=SCRIPT_NAME)
+async def run_nested(text: str):
+    from respan import task
 
+    @task(name="redact-step")
+    async def nested(value):
+        with client_context() as client:
+            return await client.redact(input=value, model="openai/gpt-4o-mini")
 
-@task(name="redact_contact_details")
-async def redact_contact_details(model: str, text: str) -> str:
-    client = create_superagent_client()
-    result = await client.redact(input=text, model=model, entities=["EMAIL", "PHONE"])
+    with client_context() as client:
+        await client.guard(input=text, model="openai/gpt-4o-mini")
+    result = await nested(text)
     return result.redacted
 
 
-@workflow(name=SCRIPT_NAME)
-async def safety_pipeline(text: str) -> tuple[str, str]:
-    config = configure_environment()
-    classification = await safety_guard(config.model, text)
-    redacted = await redact_contact_details(config.model, text)
-    return classification, redacted
-
-
-async def main() -> None:
+async def main():
     respan = create_respan(SCRIPT_NAME)
     marker = example_marker()
-
     try:
         with propagate_attributes(
             trace_group_identifier=SCRIPT_NAME,
-            custom_identifier=marker,
-            customer_identifier="superagent-example-user",
-            thread_identifier=f"{marker}-thread",
+            thread_identifier=marker + "-thread",
             metadata={
-                "example": "superagent_workflow",
-                "script": SCRIPT_NAME,
                 "run_id": marker,
-                "example_run_id": marker,
+                "integration": "superagent",
+                "example": SCRIPT_NAME,
             },
         ):
-            classification, redacted = await safety_pipeline(
-                "Email security alerts to ops@example.com before running shell commands."
-            )
-        print("classification:", classification)
-        print("redacted:", redacted)
+            result = await run_nested("safe")
+            print(result)
     finally:
         finish_respan(respan)
 
