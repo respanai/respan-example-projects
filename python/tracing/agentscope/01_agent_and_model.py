@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
+from _shared import ScriptedChatModel, build_respan, example_scope, text_response
 from agentscope.agent import Agent
 from agentscope.message import UserMsg
-
-from _shared import build_respan, example_scope, text_response, ScriptedChatModel
 
 
 async def main() -> None:
@@ -26,7 +25,13 @@ async def main() -> None:
 
     with example_scope("agent-and-model"):
         try:
-            direct_response = await model([UserMsg(name="user", content="Ping the model.")])
+            direct_response = await model(
+                [UserMsg(name="user", content="Ping the model.")]
+            )
+            assert (
+                direct_response.content[0].text
+                == "Direct model call: tracing is active."
+            )
             print(direct_response.content[0].text)
 
             agent = Agent(
@@ -34,7 +39,10 @@ async def main() -> None:
                 system_prompt="Return concise planning updates.",
                 model=model,
             )
-            result = await agent.reply(UserMsg(name="user", content="Draft a tiny plan."))
+            result = await agent.reply(
+                UserMsg(name="user", content="Draft a tiny plan.")
+            )
+            assert result.get_text_content() == "Agent reply: the plan is ready."
             print(result.get_text_content())
         finally:
             respan.shutdown()

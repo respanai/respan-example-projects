@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import asyncio
 
-from agentscope.agent import Agent
-from agentscope.message import UserMsg
-
 from _shared import (
+    FailingChatModel,
+    ScriptedChatModel,
     build_respan,
     example_scope,
     text_response,
-    FailingChatModel,
-    ScriptedChatModel,
 )
+from agentscope.agent import Agent
+from agentscope.message import UserMsg
 
 
 async def main() -> None:
@@ -52,6 +51,8 @@ async def main() -> None:
             review = await reviewer.reply(
                 UserMsg(name="user", content="Review the draft.")
             )
+            assert draft.get_text_content().startswith("Draft:")
+            assert review.get_text_content().startswith("Review:")
             print(draft.get_text_content())
             print(review.get_text_content())
 
@@ -65,7 +66,10 @@ async def main() -> None:
                     UserMsg(name="user", content="Trigger failure.")
                 )
             except RuntimeError as exc:
+                assert str(exc) == "deterministic AgentScope model failure"
                 print(f"Caught expected failure: {exc}")
+            else:
+                raise AssertionError("Expected controlled failure")
         finally:
             respan.shutdown()
 

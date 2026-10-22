@@ -10,16 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.message import TextBlock, ToolCallBlock
+from agentscope.model import ChatResponse, ChatUsage
 from dotenv import load_dotenv
 from respan import Respan, propagate_attributes
 from respan_instrumentation_agentscope import AgentScopeInstrumentor
 
-from agentscope.formatter import OpenAIChatFormatter
-from agentscope.message import TextBlock, ToolCallBlock
-from agentscope.model import ChatResponse, ChatUsage
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
-load_dotenv(REPO_ROOT / ".env", override=True)
+load_dotenv(REPO_ROOT / ".env", override=False)
 
 DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
 DEFAULT_CUSTOMER_IDENTIFIER = "agentscope-example-user"
@@ -39,6 +38,7 @@ def build_respan(
     workflow_name: str,
     *,
     models: Sequence[Any] | None = None,
+    capture_content: bool = True,
 ) -> Respan:
     run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID", DEFAULT_RUN_ID)
     group_identifier = os.getenv(
@@ -49,7 +49,9 @@ def build_respan(
         api_key=_required_env("RESPAN_API_KEY"),
         base_url=os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL),
         app_name=f"agentscope-{example_name}",
-        instrumentations=[AgentScopeInstrumentor(models=models)],
+        instrumentations=[
+            AgentScopeInstrumentor(models=models, capture_content=capture_content)
+        ],
         customer_identifier=os.getenv(
             "RESPAN_EXAMPLE_CUSTOMER_IDENTIFIER",
             DEFAULT_CUSTOMER_IDENTIFIER,
@@ -62,6 +64,7 @@ def build_respan(
         },
         thread_identifier=f"{group_identifier}:{example_name}",
         environment="examples",
+        is_batching_enabled=False,
     )
 
 
@@ -74,6 +77,11 @@ def example_scope(example_name: str):
     )
     with propagate_attributes(
         trace_group_identifier=group_identifier,
+        metadata={
+            "run_id": run_id,
+            "integration": "agentscope",
+            "example": example_name,
+        },
         custom_identifier=f"{run_id}:{example_name}",
     ):
         yield
@@ -83,7 +91,9 @@ def usage(input_tokens: int = 10, output_tokens: int = 6) -> ChatUsage:
     return ChatUsage(input_tokens=input_tokens, output_tokens=output_tokens, time=0.01)
 
 
-def text_response(text: str, *, input_tokens: int = 10, output_tokens: int = 6) -> ChatResponse:
+def text_response(
+    text: str, *, input_tokens: int = 10, output_tokens: int = 6
+) -> ChatResponse:
     return ChatResponse(
         content=[TextBlock(text=text)],
         is_last=True,
@@ -123,7 +133,9 @@ class ScriptedChatModel:
         self,
         *,
         model: str,
-        responses: list[ChatResponse | Callable[[list[Any], list[dict] | None], ChatResponse]],
+        responses: list[
+            ChatResponse | Callable[[list[Any], list[dict] | None], ChatResponse]
+        ],
     ) -> None:
         self.model = model
         self.formatter = OpenAIChatFormatter()
