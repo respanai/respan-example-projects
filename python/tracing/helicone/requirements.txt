@@ -1,0 +1,4 @@
+helicone-helpers==1.2.1
+python-dotenv>=1,<2
+respan-ai>=4.1,<5
+respan-instrumentation-helicone>=0.1,<1
