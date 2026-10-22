@@ -9,13 +9,16 @@
     "00": "tsx 00_quickstart.ts"
   },
   "dependencies": {
-    "@langchain/core": "^1.1.40",
-    "@langchain/langgraph": "^1.0.4",
+    "@langchain/core": "1.2.17",
+    "@langchain/langgraph": "1.4.21",
     "@respan/instrumentation-langchain": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-langchain",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "dotenv": "^17.2.3",
-    "langchain": "^1.3.3",
-    "zod": "^4.1.12"
+    "@respan/respan": "2.5.0",
+    "langchain": "1.5.16",
+    "zod": "^4.2.0",
+    "@langchain/openai": "1.6.2",
+    "@respan/tracing": "1.6.1",
+    "@respan/respan-sdk": "1.3.4",
+    "@opentelemetry/sdk-trace-base": "^2.10.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

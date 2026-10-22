@@ -1,4 +1,9 @@
-import { initRespan, shutdown, StaticRetriever, tracingConfig } from "./_shared";
+import {
+  initRespan,
+  shutdown,
+  StaticRetriever,
+  tracingConfig,
+} from "./_shared";
 
 export async function retrieverInvoke(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-retriever-invoke");

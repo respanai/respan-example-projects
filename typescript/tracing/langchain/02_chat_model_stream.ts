@@ -1,8 +1,14 @@
-import { fakeChat, initRespan, messageText, shutdown, tracingConfig } from "./_shared";
+import {
+  chatModel,
+  initRespan,
+  messageText,
+  shutdown,
+  tracingConfig,
+} from "./_shared";
 
 export async function chatModelStream(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-chat-model-stream");
-  const model = fakeChat(["Streaming hello from LangChain."]);
+  const model = chatModel(["Streaming hello from LangChain."]);
 
   try {
     const chunks = await model.stream(

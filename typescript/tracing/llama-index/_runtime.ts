@@ -1,100 +1,92 @@
-import dotenv from "dotenv";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { OpenAI } from "@llamaindex/openai";
+import { writeFile } from "node:fs/promises";
+import { OpenAI, OpenAIEmbedding, OpenAIResponses } from "@llamaindex/openai";
 import { Respan } from "@respan/respan";
-import { LlamaIndexInstrumentor } from "@respan/instrumentation-llama-index";
-import * as LlamaIndex from "llamaindex";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const REPO_ROOT_ENV = path.resolve(__dirname, "../../../.env");
-
-dotenv.config({ path: REPO_ROOT_ENV });
-
-export const DEFAULT_MODEL = process.env.LLAMA_INDEX_TS_MODEL ?? "gpt-4.1-nano";
-
-function createGatewayBaseURL(): string {
-  const respanBaseUrl = (
-    process.env.RESPAN_BASE_URL ?? "https://api.respan.ai"
-  ).replace(/\/+$/, "");
-
-  return respanBaseUrl.endsWith("/api")
-    ? `${respanBaseUrl}/`
-    : `${respanBaseUrl}/api/`;
-}
-
-export function createOpenAI(init: Partial<OpenAI> = {}): OpenAI {
-  const useGateway = process.env.LLAMA_INDEX_USE_OPENAI_DIRECT !== "true";
-  const gatewayBaseUrl = createGatewayBaseURL();
-
-  const apiKey = useGateway
-    ? process.env.RESPAN_API_KEY
-    : process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error(
-      "Set RESPAN_API_KEY for gateway calls, or set LLAMA_INDEX_USE_OPENAI_DIRECT=true with OPENAI_API_KEY.",
-    );
-  }
-
-  return new OpenAI({
-    model: DEFAULT_MODEL,
-    apiKey,
-    baseURL: useGateway ? gatewayBaseUrl : process.env.OPENAI_BASE_URL,
-    ...(init as Record<string, unknown>),
-  });
-}
+import {
+  LlamaIndexInstrumentor,
+  type LlamaIndexInstrumentorOptions,
+} from "@respan/instrumentation-llama-index";
+import { startFixture } from "./_fixture.js";
 
 export async function runNamedWorkflow<T>(
   workflowName: string,
-  fn: () => Promise<T>,
+  fn: (clients: {
+    llm: OpenAI;
+    embedding: OpenAIEmbedding;
+    responses: OpenAIResponses;
+    respan: Respan;
+  }) => Promise<T>,
+  options: LlamaIndexInstrumentorOptions = {},
 ): Promise<T> {
-  if (!process.env.RESPAN_API_KEY) {
-    throw new Error("Set RESPAN_API_KEY in the repository root .env.");
-  }
-
+  const fixture = await startFixture();
+  const live = process.env.LLAMA_INDEX_LIVE === "true";
+  const exporting = process.env.RESPAN_EXPORT === "true";
+  if (live && (!process.env.OPENAI_API_KEY || !process.env.LLAMA_INDEX_MODEL))
+    throw new Error(
+      "Set OPENAI_API_KEY and LLAMA_INDEX_MODEL for explicit live provider calls.",
+    );
+  if (exporting && !process.env.RESPAN_API_KEY)
+    throw new Error("Set RESPAN_API_KEY for explicit hosted export.");
+  const clientOptions = {
+    apiKey: live ? process.env.OPENAI_API_KEY : "local-fixture",
+    baseURL: live ? process.env.OPENAI_BASE_URL : `${fixture.baseURL}/v1`,
+    maxRetries: 0,
+  };
   const respan = new Respan({
-    apiKey: process.env.RESPAN_API_KEY,
-    baseURL: process.env.RESPAN_BASE_URL,
+    apiKey: exporting ? process.env.RESPAN_API_KEY : "local-fixture",
+    baseURL: exporting ? process.env.RESPAN_BASE_URL : fixture.baseURL,
     appName: workflowName,
     traceContent: true,
     silenceInitializationMessage: true,
     instrumentations: [
-      new LlamaIndexInstrumentor({
-        workflowName,
-        llamaIndexModule: LlamaIndex,
-      }),
+      new LlamaIndexInstrumentor({ workflowName, ...options }),
     ],
   });
-
-  await respan.initialize();
-  const runId = process.env.RESPAN_EXAMPLE_RUN_ID ?? `llama-index-ts-${Date.now()}`;
   try {
+    await respan.initialize();
+    const llm = new OpenAI({
+      ...clientOptions,
+      model: (process.env.LLAMA_INDEX_MODEL ?? "gpt-4o-mini") as any,
+      additionalChatOptions: { stream_options: { include_usage: true } },
+    });
+    const embedding = new OpenAIEmbedding({
+      ...clientOptions,
+      model: (process.env.LLAMA_INDEX_EMBEDDING_MODEL ??
+        "text-embedding-3-small") as any,
+    });
+    const responses = new OpenAIResponses({
+      ...clientOptions,
+      model: (process.env.LLAMA_INDEX_MODEL ?? "gpt-4o-mini") as any,
+    });
+
+    const runId =
+      process.env.RESPAN_EXAMPLE_RUN_ID ?? `${workflowName}-${Date.now()}`;
     return await respan.propagateAttributes(
       {
         custom_identifier: runId,
-        trace_group_identifier: workflowName,
+        trace_group_identifier: runId,
         metadata: {
           example_set: "typescript/tracing/llama-index",
           run_id: runId,
-          workflow_name: workflowName,
         },
       },
       () =>
-        respan.withWorkflow(
-          {
-            name: workflowName,
-            associationProperties: {
-              example_set: "typescript/tracing/llama-index",
-              framework: "llama-index",
-              language: "typescript",
-            },
-          },
-          fn,
+        respan.withWorkflow({ name: workflowName }, () =>
+          fn({ llm, embedding, responses, respan }),
         ),
     );
   } finally {
     await respan.shutdown();
+    if (process.env.RESPAN_CAPTURE_PATH)
+      await writeFile(
+        process.env.RESPAN_CAPTURE_PATH,
+        JSON.stringify(fixture.captured, null, 2),
+      );
+    console.log(
+      JSON.stringify({
+        workflow: workflowName,
+        collectedBatches: fixture.captured.length,
+      }),
+    );
+    await fixture.close();
   }
 }

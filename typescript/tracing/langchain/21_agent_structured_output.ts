@@ -1,8 +1,7 @@
-import { fakeModel } from "@langchain/core/testing";
 import { createAgent, toolStrategy } from "langchain";
 import { z } from "zod";
 
-import { initRespan, shutdown, tracingConfig } from "./_shared";
+import { chatModel, initRespan, shutdown, tracingConfig } from "./_shared";
 
 const ContactInfo = z.object({
   name: z.string(),
@@ -10,12 +9,18 @@ const ContactInfo = z.object({
 });
 
 export async function agentStructuredOutput(): Promise<void> {
-  const runtime = await initRespan("typescript-langchain-agent-structured-output");
-  const model = fakeModel().respondWithTools([
+  const runtime = await initRespan(
+    "typescript-langchain-agent-structured-output",
+  );
+  const model = chatModel([
     {
-      id: "call_extract_contact",
-      name: "extract-1",
-      args: { name: "Ada Lovelace", email: "ada@example.com" },
+      toolCalls: [
+        {
+          id: "call_extract_contact",
+          name: "extract-1",
+          args: { name: "Ada Lovelace", email: "ada@example.com" },
+        },
+      ],
     },
   ]);
   const agent = createAgent({
@@ -29,10 +34,15 @@ export async function agentStructuredOutput(): Promise<void> {
     const result = await agent.invoke(
       {
         messages: [
-          { role: "user", content: "Extract contact info: Ada Lovelace, ada@example.com" },
+          {
+            role: "user",
+            content: "Extract contact info: Ada Lovelace, ada@example.com",
+          },
         ],
       },
-      tracingConfig(runtime, "agent_structured_output", { framework: "langgraph" }),
+      tracingConfig(runtime, "agent_structured_output", {
+        framework: "langgraph",
+      }),
     );
     console.log(JSON.stringify(result.structuredResponse));
   } finally {

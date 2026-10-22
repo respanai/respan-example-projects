@@ -8,18 +8,24 @@
     "02:rag": "tsx 02_rag_query_engine_workflow.ts",
     "03:tools": "tsx 03_tool_call_workflow.ts",
     "04:failure": "tsx 04_llm_failure_workflow.ts",
-    "all": "npm run 01:basic && npm run 02:rag && npm run 03:tools && npm run 04:failure",
-    "typecheck": "tsc --noEmit"
+    "all": "npm run 01:basic && npm run 02:rag && npm run 03:tools && npm run 04:failure && npm run 05:stream && npm run 06:embedding && npm run 07:payloads && npm run 08:privacy && npm run 09:concurrent && npm run 10:responses",
+    "typecheck": "tsc --noEmit",
+    "05:stream": "tsx 05_streaming_workflow.ts",
+    "06:embedding": "tsx 06_embedding_vectors.ts",
+    "07:payloads": "tsx 07_history_tools_multimodal.ts",
+    "08:privacy": "tsx 08_content_privacy.ts",
+    "09:concurrent": "tsx 09_concurrent_calls.ts",
+    "10:responses": "tsx 10_responses_api.ts"
   },
   "dependencies": {
-    "@llamaindex/core": "0.6.22",
-    "@llamaindex/openai": "0.4.22",
+    "@llamaindex/core": "0.6.23",
+    "@llamaindex/openai": "0.4.23",
     "@respan/instrumentation-llama-index": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-llama-index",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^17.2.3",
-    "llamaindex": "0.12.1"
+    "@respan/respan": "2.5.0",
+    "@respan/respan-sdk": "1.3.4",
+    "@respan/tracing": "1.6.1",
+    "llamaindex": "0.12.1",
+    "@llamaindex/env": "0.1.31"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

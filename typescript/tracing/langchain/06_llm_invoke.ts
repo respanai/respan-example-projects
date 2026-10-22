@@ -1,8 +1,8 @@
-import { fakeLlm, initRespan, shutdown, tracingConfig } from "./_shared";
+import { textModel, initRespan, shutdown, tracingConfig } from "./_shared";
 
 export async function llmInvoke(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-llm-invoke");
-  const llm = fakeLlm("Legacy string LLM response.");
+  const llm = textModel("Legacy string LLM response.");
 
   try {
     const response = await llm.invoke(

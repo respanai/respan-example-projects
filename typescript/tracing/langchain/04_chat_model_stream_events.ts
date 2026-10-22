@@ -1,8 +1,10 @@
-import { fakeChat, initRespan, shutdown, tracingConfig } from "./_shared";
+import { chatModel, initRespan, shutdown, tracingConfig } from "./_shared";
 
 export async function chatModelStreamEvents(): Promise<void> {
-  const runtime = await initRespan("typescript-langchain-chat-model-stream-events");
-  const model = fakeChat(["stream events response"]);
+  const runtime = await initRespan(
+    "typescript-langchain-chat-model-stream-events",
+  );
+  const model = chatModel(["stream events response"]);
 
   try {
     const events = model.streamEvents("Emit callback events.", {

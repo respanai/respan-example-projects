@@ -3,11 +3,15 @@ import { RunnableLambda } from "@langchain/core/runnables";
 import { initRespan, shutdown, tracingConfig } from "./_shared";
 
 export async function runnableWithFallbacks(): Promise<void> {
-  const runtime = await initRespan("typescript-langchain-runnable-with-fallbacks");
+  const runtime = await initRespan(
+    "typescript-langchain-runnable-with-fallbacks",
+  );
   const primary = RunnableLambda.from<string, string>(() => {
     throw new Error("primary failed");
   });
-  const fallback = RunnableLambda.from((input: string) => `fallback handled ${input}`);
+  const fallback = RunnableLambda.from(
+    (input: string) => `fallback handled ${input}`,
+  );
   const runnable = primary.withFallbacks({ fallbacks: [fallback] });
 
   try {

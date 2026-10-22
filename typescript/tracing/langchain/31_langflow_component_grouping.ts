@@ -1,7 +1,15 @@
 import { RunnableLambda } from "@langchain/core/runnables";
-import { addRespanCallback, getCallbackHandler } from "@respan/instrumentation-langchain";
+import {
+  addRespanCallback,
+  getCallbackHandler,
+} from "@respan/instrumentation-langchain";
 
-import { getWeather, initRespan, shutdown, type ExampleRuntime } from "./_shared";
+import {
+  getWeather,
+  initRespan,
+  shutdown,
+  type ExampleRuntime,
+} from "./_shared";
 
 function langflowConfig(
   runtime: ExampleRuntime,
@@ -23,10 +31,12 @@ function langflowConfig(
 }
 
 export async function langflowComponentGrouping(): Promise<void> {
-  const runtime = await initRespan("typescript-langchain-langflow-component-grouping");
+  const runtime = await initRespan(
+    "typescript-langchain-langflow-component-grouping",
+  );
   const handler = getCallbackHandler();
-  const routeDepartment = RunnableLambda.from((input: { department: string }) =>
-    `${input.department}-workspace`,
+  const routeDepartment = RunnableLambda.from(
+    (input: { department: string }) => `${input.department}-workspace`,
   );
 
   try {

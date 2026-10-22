@@ -1,8 +1,8 @@
-import { fakeLlm, initRespan, shutdown, tracingConfig } from "./_shared";
+import { textModel, initRespan, shutdown, tracingConfig } from "./_shared";
 
 export async function llmStream(): Promise<void> {
   const runtime = await initRespan("typescript-langchain-llm-stream");
-  const llm = fakeLlm("Streaming from a string LLM.");
+  const llm = textModel("Streaming from a string LLM.");
 
   try {
     const chunks = await llm.stream(
