@@ -1,5 +1,3 @@
-from respan import workflow
-
 from _shared import (
     EMBED_MODEL,
     RERANK_MODEL,
@@ -8,6 +6,7 @@ from _shared import (
     install_cohere_stubs_if_needed,
     run_with_example_attributes,
 )
+from respan import workflow
 
 WORKFLOW_NAME = "cohere_embed_rerank.workflow"
 

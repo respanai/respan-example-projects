@@ -16,6 +16,8 @@ EXAMPLES = (
     "06_tool_calling.py",
     "07_expected_provider_failure.py",
     "08_expected_application_failure.py",
+    "09_structured_output.py",
+    "10_agent_completions.py",
 )
 
 

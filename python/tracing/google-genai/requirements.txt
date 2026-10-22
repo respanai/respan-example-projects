@@ -1,4 +1,4 @@
 respan-ai
 respan-instrumentation-google-genai
-google-genai
+google-genai>=2.28.0,<3.0.0
 python-dotenv
