@@ -9,9 +9,9 @@ from _shared import (
     make_respan,
     print_result,
     tracer,
+    workflow,
     workflow_name,
 )
-from respan import workflow
 
 EXAMPLE_NAME = "chat-provider"
 

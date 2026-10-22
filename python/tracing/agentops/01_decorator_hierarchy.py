@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from agentops import agent, task, tool, trace
-
 from _shared import build_respan, example_scope
+from agentops import agent, task, tool, trace
 
 
 def main() -> None:

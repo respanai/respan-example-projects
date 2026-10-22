@@ -1,28 +1,38 @@
+"""Run every mapped example with one marker and an aggregate failure result."""
+
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-EXAMPLES = [
-    "01_spans_and_ml.py",
-    "02_datasets_projects_spaces.py",
-    "03_experiments_prompts_evaluators.py",
-    "04_admin_operations.py",
-]
+EXAMPLES = sorted(Path(__file__).parent.glob("[0-9][0-9]_*.py"))
 
 
-def run() -> None:
-    here = Path(__file__).resolve().parent
-    failures: list[str] = []
-    for example in EXAMPLES:
-        print(f"\n### running {example}", flush=True)
-        result = subprocess.run([sys.executable, str(here / example)], check=False)
+def main():
+    marker = os.getenv("RESPAN_EXAMPLE_RUN_ID", "arize-controlled-local")
+    failures = []
+    for script in EXAMPLES:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script)],
+                env={**os.environ, "RESPAN_EXAMPLE_RUN_ID": marker},
+                cwd=script.parent,
+                timeout=90,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            failures.append(script.name + ":timeout")
+            continue
         if result.returncode:
-            failures.append(f"{example} (exit {result.returncode})")
+            failures.append(script.name + ":" + str(result.returncode))
+    print("RESPAN_EXAMPLE_RUN_ID=" + marker)
     if failures:
-        raise SystemExit(f"Arize example failures: {', '.join(failures)}")
+        print("Failed examples: " + ", ".join(failures))
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    run()
+    raise SystemExit(main())
