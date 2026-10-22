@@ -59,14 +59,14 @@ def gateway_settings() -> GatewaySettings:
     )
 
 
-def create_respan(app_name: str) -> Respan:
+def create_respan(app_name: str, *, capture_content: bool = True) -> Respan:
     load_repo_env()
     run_id = example_run_id()
     return Respan(
         app_name=app_name,
         api_key=require_env("RESPAN_API_KEY"),
         base_url=os.getenv("RESPAN_BASE_URL", "https://api.respan.ai/api"),
-        instrumentations=[SemanticKernelInstrumentor()],
+        instrumentations=[SemanticKernelInstrumentor(capture_content=capture_content)],
         is_batching_enabled=False,
         metadata={
             "integration": "semantic-kernel",
@@ -84,12 +84,14 @@ def create_kernel(*, with_chat_service: bool = True) -> Kernel:
     if not with_chat_service:
         return kernel
 
-    settings = gateway_settings()
-    client = AsyncOpenAI(
-        api_key=settings.api_key,
-        base_url=settings.base_url,
+    client = create_client(allow_live=True)
+    settings = (
+        gateway_settings()
+        if live_enabled()
+        else GatewaySettings(
+            "fixture-only", "https://fixture.invalid/v1", "fixture-model"
+        )
     )
-    _CLIENTS.append(client)
     kernel.add_service(
         OpenAIChatCompletion(
             ai_model_id=settings.model,
@@ -98,6 +100,24 @@ def create_kernel(*, with_chat_service: bool = True) -> Kernel:
         )
     )
     return kernel
+
+
+def live_enabled() -> bool:
+    return os.getenv("SEMANTIC_KERNEL_LIVE") == "1"
+
+
+def create_client(*, allow_live: bool = False) -> AsyncOpenAI:
+    if allow_live and live_enabled():
+        settings = gateway_settings()
+        client = AsyncOpenAI(
+            api_key=settings.api_key, base_url=settings.base_url, max_retries=0
+        )
+    else:
+        from _fixtures import FixtureServer
+
+        client = FixtureServer().client()
+    _CLIENTS.append(client)
+    return client
 
 
 async def close_kernel_clients() -> None:

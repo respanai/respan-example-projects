@@ -27,7 +27,7 @@ EXAMPLE_SET = "microsoft-agent-framework"
 def load_gateway_env() -> tuple[str, str, str, str, str]:
     """Load the repo-root env file and configure OpenAI-compatible gateway env."""
     requested_run_id = os.getenv("RESPAN_EXAMPLE_RUN_ID")
-    load_dotenv(REPO_ROOT / ".env", override=True)
+    load_dotenv(REPO_ROOT / ".env", override=False)
     if requested_run_id:
         os.environ["RESPAN_EXAMPLE_RUN_ID"] = requested_run_id
 
@@ -131,7 +131,7 @@ def create_deterministic_chat_client():
     return DeterministicOpenAIChatCompletionClient()
 
 
-def create_respan(app_name: str) -> Respan:
+def create_respan(app_name: str, *, capture_content: bool = True) -> Respan:
     respan_api_key, respan_base_url, _gateway_key, _gateway_url, _model = (
         load_gateway_env()
     )
@@ -141,15 +141,17 @@ def create_respan(app_name: str) -> Respan:
         base_url=respan_base_url,
         app_name=app_name,
         instrumentations=[
-            MicrosoftAgentFrameworkInstrumentor(capture_content=True),
+            MicrosoftAgentFrameworkInstrumentor(capture_content=capture_content),
         ],
         metadata={
             "integration": EXAMPLE_SET,
             "example": app_name,
             "example_run_id": run_id,
+            "run_id": run_id,
         },
         environment="examples",
         is_batching_enabled=False,
+        is_auto_instrument=False,
         log_level=os.getenv("RESPAN_LOG_LEVEL", "WARNING"),
     )
 
@@ -163,6 +165,7 @@ def workflow_attributes(workflow_name: str) -> dict[str, object]:
             "integration": EXAMPLE_SET,
             "example": workflow_name,
             "example_run_id": run_id,
+            "run_id": run_id,
             "workflow_name": workflow_name,
         },
     }
@@ -194,3 +197,74 @@ def live_example_enabled() -> bool:
         "true",
         "yes",
     }
+
+
+def create_streaming_fixture_client(mode="complete"):
+    """Native framework client with local stream updates and deterministic usage."""
+    from agent_framework import (
+        BaseChatClient,
+        ChatResponse,
+        ChatResponseUpdate,
+        Content,
+        Message,
+        ResponseStream,
+    )
+    from agent_framework.observability import ChatTelemetryLayer
+
+    class FixtureClient(ChatTelemetryLayer, BaseChatClient):
+        OTEL_PROVIDER_NAME = "fixture"
+
+        def __init__(self):
+            self.model = "respan-maf-fixture"
+            self.closed = False
+            super().__init__()
+
+        def service_url(self):
+            return "https://fixture.invalid/v1"
+
+        def _inner_get_response(self, *, messages, options, stream=False, **kwargs):
+            async def response():
+                return ChatResponse(
+                    messages=Message(
+                        "assistant", [Content.from_text("Fixture answer")]
+                    ),
+                    model=self.model,
+                    usage_details={
+                        "input_token_count": 7,
+                        "output_token_count": 3,
+                        "cache_read_input_token_count": 2,
+                        "reasoning_output_token_count": 1,
+                    },
+                )
+
+            async def updates():
+                try:
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[Content.from_text("Fixture ")],
+                        model=self.model,
+                    )
+                    if mode == "error":
+                        raise RuntimeError("Controlled fixture stream failure")
+                    if mode == "cancel":
+                        await asyncio.Event().wait()
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[
+                            Content.from_text("answer"),
+                            Content.from_usage(
+                                {"input_token_count": 7, "output_token_count": 3}
+                            ),
+                        ],
+                        model=self.model,
+                    )
+                finally:
+                    self.closed = True
+
+            return (
+                ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+                if stream
+                else response()
+            )
+
+    return FixtureClient()

@@ -1,50 +1,27 @@
 # Microsoft Agent Framework tracing examples
 
-These examples run Microsoft Agent Framework agents, tools, workflows, and
-success/failure paths with Respan tracing enabled. The default success path
-uses the real Agent Framework execution and telemetry layers with deterministic
-provider responses, so its two-chat/tool tree is reproducible in CI.
-
-The scripts load environment variables from the repo root `.env` file:
-
-- `RESPAN_API_KEY`
-- `RESPAN_BASE_URL`
-- `RESPAN_GATEWAY_API_KEY`
-- `RESPAN_GATEWAY_BASE_URL`
-- `RESPAN_MODEL`
-- `RESPAN_EXAMPLE_RUN_ID` (exact shared audit marker)
-- `RESPAN_MAF_RUN_LIVE=1` (opt in to the live gateway example)
-
-Install dependencies from this directory:
+Seven local fixture scripts exercise Agent Framework 1.20.0 and the paired instrumentation update. The adapter also supports 1.8.1, subject to the upstream stream limitations below.
 
 ```bash
 pip install -r requirements.txt
+pip install --no-deps -e /path/to/respan/python-sdks/instrumentations/respan-instrumentation-microsoft-agent-framework
+RESPAN_EXAMPLE_RUN_ID=maf-audit-001 python run_all.py
 ```
 
-When testing this branch before the instrumentation package is published, also
-install the local package from the Respan worktree:
+Set `RESPAN_API_KEY` in the repository root `.env` or environment. `RESPAN_BASE_URL` defaults to `https://api.respan.ai/api`. The default suite uses real framework classes with deterministic provider results and exports synthetic trace payloads to Respan. It makes no model-provider requests. All scenarios carry the exact marker in `metadata.run_id` and a workflow-specific custom identifier.
 
-```bash
-pip install -e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-microsoft-agent-framework
-```
+| Script | Coverage |
+|---|---|
+| `01_agent_tool_workflow.py` | Native workflow, agent, tool call, historical/current call separation and response usage. |
+| `02_deterministic_failure.py` | A native tool exception. |
+| `04_stream_lifecycle.py` | Stream completion, early close, failure and cancellation. |
+| `05_content_privacy.py` | Scoped content opt-out for chat, stream and tool spans. |
+| `06_falsy_tools.py` | False and zero tool results through typed Content responses and subsequent chat history. |
+| `07_scoped_suppression.py` | Suppressed native activity between two visible calls. |
+| `08_embeddings.py` | Full 128-value vectors, reported/absent usage, private embedding and controlled failure. |
 
-Run the examples:
+`03_live_agent_tool_workflow.py` is an optional live Gateway example. It runs only when `RESPAN_MAF_RUN_LIVE=1`; configure `RESPAN_GATEWAY_API_KEY`, `RESPAN_GATEWAY_BASE_URL`, and optional `RESPAN_MODEL` for that separate run.
 
-```bash
-python 01_agent_tool_workflow.py
-python 02_deterministic_failure.py
-RESPAN_MAF_RUN_LIVE=1 python 03_live_agent_tool_workflow.py
-```
+The default runner produces 32 spans across seven connected traces. Inspect the exact `metadata__run_id` through Respan MCP, then inspect all trees and detailed records for usage, vectors, tool IDs, privacy, suppression, parentage and errors. Source framework spans and current-turn tool calls should not be duplicated.
 
-`01_agent_tool_workflow.py` covers a native workflow, bounded Respan
-workflow/task wrappers, an agent run, two LLM/chat turns, and one real
-Agent Framework tool execution without a provider network dependency.
-`02_deterministic_failure.py` produces an expected tool failure span without
-depending on model behavior.
-`03_live_agent_tool_workflow.py` is optional and uses the OpenAI-compatible
-Respan gateway. It exits without creating a trace unless
-`RESPAN_MAF_RUN_LIVE=1` is set.
-
-All emitted spans use `RESPAN_EXAMPLE_RUN_ID` as both propagated metadata and
-the native `trace_group_identifier`. Every script explicitly flushes and shuts
-down Respan before exiting.
+Agent Framework 1.8.1 has no public `ResponseStream.close()` and leaves cancelled native chat spans unfinished even without Respan. The full example runner therefore targets current 1.20.0. Native response objects and iterator behavior are preserved by the adapter.
