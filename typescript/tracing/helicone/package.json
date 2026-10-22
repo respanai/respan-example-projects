@@ -1,0 +1,37 @@
+{
+  "name": "respan-helicone-typescript-examples",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:instrumentation": "cd ../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-helicone && npm run build",
+    "pretypecheck": "npm run build:instrumentation",
+    "preexamples": "npm run build:instrumentation",
+    "01:request": "tsx 01_log_request_chat_tools.ts",
+    "02:stream": "tsx 02_log_stream.ts",
+    "03:single-stream": "tsx 03_log_single_stream.ts",
+    "04:single-builder": "tsx 04_single_request_builder.ts",
+    "05:custom-events": "tsx 05_custom_events.ts",
+    "06:error": "tsx 06_expected_error.ts",
+    "07:anthropic": "tsx 07_anthropic_direct.ts",
+    "08:delayed-builder": "tsx 08_delayed_builder.ts",
+    "09:privacy": "tsx 09_privacy_constructor_headers.ts",
+    "10:provider-streams": "tsx 10_provider_stream_shapes.ts",
+    "examples": "tsx run_all.ts",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@helicone/helpers": "1.8.3",
+    "@respan/instrumentation-helicone": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-helicone",
+    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
+    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
+    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
+    "dotenv": "^17.2.3",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1"
+  }
+}
