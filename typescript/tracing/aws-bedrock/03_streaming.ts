@@ -43,7 +43,9 @@ try {
           },
         }),
       );
-      const converseText = await collectConverseStreamText(converseStream.stream);
+      const converseText = await collectConverseStreamText(
+        converseStream.stream,
+      );
 
       const invokeStream = await bedrock.send(
         new InvokeModelWithResponseStreamCommand({
@@ -54,7 +56,10 @@ try {
             anthropic_version: "bedrock-2023-05-31",
             max_tokens: 128,
             messages: [
-              { role: "user", content: "Stream a Bedrock InvokeModel response." },
+              {
+                role: "user",
+                content: "Stream a Bedrock InvokeModel response.",
+              },
             ],
           }),
         }),
@@ -70,9 +75,11 @@ try {
   );
 
   logExampleResult(workflowName, {
-    expected: "two chat spans, one for ConverseStream and one for InvokeModelWithResponseStream, emitted after stream consumption",
+    expected:
+      "two chat spans, one for ConverseStream and one for InvokeModelWithResponseStream, emitted after stream consumption",
     actual: result,
   });
 } finally {
+  bedrock.destroy();
   await shutdownRespan(respan);
 }

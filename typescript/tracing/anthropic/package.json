@@ -7,20 +7,26 @@
     "streaming": "tsx 02_streaming.ts",
     "tool": "tsx 03_tool_call.ts",
     "failure": "tsx 04_expected_error.ts",
-    "all": "npm run basic && npm run streaming && npm run tool && npm run failure",
+    "helpers": "tsx 05_parse_and_stream_helpers.ts",
+    "runner": "tsx 06_native_tool_runner.ts",
+    "batches": "tsx 07_count_tokens_and_batches.ts",
+    "legacy": "tsx 08_legacy_completion.ts",
+    "all": "tsx run_all.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
+    "@anthropic-ai/sdk": "0.133.0",
     "@respan/instrumentation-anthropic": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-anthropic",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^16.4.7"
+    "@respan/respan": "2.5.0",
+    "@respan/respan-sdk": "1.3.4",
+    "@respan/tracing": "1.6.1",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
+    "@traceloop/ai-semantic-conventions": "0.14.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.29",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "@types/node": "^24.10.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
   }
 }

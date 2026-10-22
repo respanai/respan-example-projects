@@ -8,6 +8,7 @@ const scripts = [
   "02_invoke_model.ts",
   "03_streaming.ts",
   "04_expected_error.ts",
+  "05_native_features.ts",
 ];
 
 for (const script of scripts) {

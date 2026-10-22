@@ -1,7 +1,6 @@
 import {
   createAzureClient,
   createRespan,
-  installMockAzureOpenAIResponses,
   logExampleResult,
   runWithExampleTrace,
 } from "./_shared.js";
@@ -9,8 +8,9 @@ import {
 const workflowName = "TypeScript Azure OpenAI Embeddings Example";
 
 export async function embeddingsExample(): Promise<void> {
-  const restoreMocks = installMockAzureOpenAIResponses();
-  const respan = createRespan("typescript-azure-openai-embeddings-example");
+  const respan = await createRespan(
+    "typescript-azure-openai-embeddings-example",
+  );
   await respan.initialize();
 
   try {
@@ -20,12 +20,9 @@ export async function embeddingsExample(): Promise<void> {
         model: "text-embedding-3-small",
         input: [
           "Respan captures Azure OpenAI embedding calls.",
-          "Embedding vectors should not be exported as span attributes.",
+          "Returned vectors are captured in the canonical embedding output.",
         ],
-        extraAttributes: {
-          "respan.metadata.azure_feature": "embeddings",
-        },
-      } as any);
+      });
     });
 
     logExampleResult(workflowName, {
@@ -35,7 +32,6 @@ export async function embeddingsExample(): Promise<void> {
     });
   } finally {
     await respan.shutdown();
-    restoreMocks();
   }
 }
 

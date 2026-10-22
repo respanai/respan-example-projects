@@ -55,9 +55,11 @@ try {
   );
 
   logExampleResult(workflowName, {
-    expected: "one chat span with Converse input messages, tool definitions, output, tool_calls, and usage tokens",
+    expected:
+      "one chat span with Converse input messages, tool definitions, output, tool_calls, and usage tokens",
     actual: result,
   });
 } finally {
+  bedrock.destroy();
   await shutdownRespan(respan);
 }

@@ -8,17 +8,22 @@
     "02:stream-tools": "tsx 02_streaming_tool_calls.ts",
     "03:completion": "tsx 03_text_completion.ts",
     "04:embeddings": "tsx 04_embeddings.ts",
-    "all": "tsx 01_chat_completion.ts && tsx 02_streaming_tool_calls.ts && tsx 03_text_completion.ts && tsx 04_embeddings.ts"
+    "all": "tsx 01_chat_completion.ts && tsx 02_streaming_tool_calls.ts && tsx 03_text_completion.ts && tsx 04_embeddings.ts && tsx 05_responses.ts && tsx 06_privacy_and_errors.ts",
+    "typecheck": "tsc --noEmit",
+    "05:responses": "tsx 05_responses.ts",
+    "06:privacy-errors": "tsx 06_privacy_and_errors.ts"
   },
   "dependencies": {
     "@respan/instrumentation-azure-openai": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-azure-openai",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^17.2.3",
-    "openai": "^4.80.1",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "@respan/respan": "2.5.0",
+    "@respan/tracing": "1.6.1",
+    "@respan/respan-sdk": "1.3.4",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
+    "@traceloop/ai-semantic-conventions": "0.14.0",
+    "openai": "7.32.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
   },
   "devDependencies": {
     "@types/node": "^24.10.1"

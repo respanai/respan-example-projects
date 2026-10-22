@@ -6,7 +6,11 @@ export interface MockCohereServer {
   close: () => Promise<void>;
 }
 
-function jsonResponse(res: http.ServerResponse, status: number, body: unknown): void {
+function jsonResponse(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 }
@@ -29,7 +33,9 @@ function sseResponse(res: http.ServerResponse, events: unknown[]): void {
   res.end();
 }
 
-async function readJson(req: http.IncomingMessage): Promise<Record<string, any>> {
+async function readJson(
+  req: http.IncomingMessage,
+): Promise<Record<string, any>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -94,6 +100,34 @@ function v2ChatStreamEvents(): unknown[] {
     },
     { type: "content-end", index: 0 },
     {
+      type: "tool-call-start",
+      index: 0,
+      delta: {
+        message: {
+          tool_calls: {
+            id: "stream_call_1",
+            type: "function",
+            function: { name: "lookup_docs", arguments: "" },
+          },
+        },
+      },
+    },
+    {
+      type: "tool-call-delta",
+      index: 0,
+      delta: {
+        message: { tool_calls: { function: { arguments: '{"topic":' } } },
+      },
+    },
+    {
+      type: "tool-call-delta",
+      index: 0,
+      delta: {
+        message: { tool_calls: { function: { arguments: '"respan"}' } } },
+      },
+    },
+    { type: "tool-call-end", index: 0 },
+    {
       type: "message-end",
       delta: {
         finish_reason: "COMPLETE",
@@ -110,7 +144,10 @@ function v1GenerateBody(): Record<string, any> {
   return {
     id: "mock-generate-v1",
     prompt: "Write a concise status.",
-    generations: [{ text: "Mock legacy generation response.", finish_reason: "COMPLETE" }],
+    generations: [
+      { text: "Mock legacy generation response.", finish_reason: "COMPLETE" },
+      { text: "", finish_reason: "COMPLETE" },
+    ],
     meta: {
       billed_units: { input_tokens: 4, output_tokens: 5 },
       tokens: { input_tokens: 6, output_tokens: 5 },
@@ -130,7 +167,13 @@ function embedBody(body: Record<string, any>): Record<string, any> {
   return {
     id: "mock-embed",
     response_type: "embeddings_by_type",
-    embeddings: { float: [[0.11, 0.22, 0.33]] },
+    embeddings: {
+      float: [Array.from({ length: 5001 }, (_, i) => i / 5001)],
+      int8: [[0, -1, 127]],
+      uint8: [[0, 255]],
+      binary: [[0, -128]],
+      ubinary: [[0, 255]],
+    },
     texts: body.texts ?? ["hello"],
     meta: { billed_units: { input_tokens: 3 } },
   };
@@ -139,7 +182,13 @@ function embedBody(body: Record<string, any>): Record<string, any> {
 function rerankBody(): Record<string, any> {
   return {
     id: "mock-rerank",
-    results: [{ index: 1, relevance_score: 0.98 }],
+    results: [
+      {
+        index: 1,
+        relevance_score: 0,
+        document: { text: "", extra: "preserved" },
+      },
+    ],
     meta: { billed_units: { search_units: 1 } },
   };
 }
@@ -150,6 +199,36 @@ export async function startMockCohereServer(): Promise<MockCohereServer> {
       const body = await readJson(req);
       const path = new URL(req.url ?? "/", "http://localhost").pathname;
 
+      if (path === "/v2/parse") {
+        jsonResponse(res, 200, {
+          id: "mock-parse",
+          pages: [
+            {
+              type: "markdown",
+              index: 0,
+              markdown: { content: "# Parsed document", images: [] },
+            },
+          ],
+        });
+        return;
+      }
+      if (path === "/v1/chat" && body.stream === true) {
+        jsonStreamResponse(res, [
+          {
+            event_type: "text-generation",
+            text: "Mock v1 streaming response.",
+          },
+          {
+            event_type: "stream-end",
+            response: {
+              text: "Mock v1 streaming response.",
+              generation_id: "mock-v1-stream",
+              meta: { tokens: { input_tokens: 0, output_tokens: 2 } },
+            },
+          },
+        ]);
+        return;
+      }
       if (path === "/v2/chat" && body.stream === true) {
         sseResponse(res, v2ChatStreamEvents());
         return;
@@ -181,6 +260,7 @@ export async function startMockCohereServer(): Promise<MockCohereServer> {
       if (path === "/v1/chat") {
         jsonResponse(res, 200, {
           text: "Mock Cohere v1 chat response.",
+          generation_id: "mock-v1-chat",
           meta: { tokens: { input_tokens: 6, output_tokens: 5 } },
         });
         return;
@@ -188,7 +268,9 @@ export async function startMockCohereServer(): Promise<MockCohereServer> {
 
       jsonResponse(res, 404, { message: `Unhandled mock path: ${path}` });
     } catch (error) {
-      jsonResponse(res, 500, { message: error instanceof Error ? error.message : String(error) });
+      jsonResponse(res, 500, {
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 

@@ -1,7 +1,6 @@
 import {
   createAzureClient,
   createRespan,
-  installMockAzureOpenAIResponses,
   logExampleResult,
   runWithExampleTrace,
 } from "./_shared.js";
@@ -9,8 +8,7 @@ import {
 const workflowName = "TypeScript Azure OpenAI Chat Example";
 
 export async function chatCompletionExample(): Promise<void> {
-  const restoreMocks = installMockAzureOpenAIResponses();
-  const respan = createRespan("typescript-azure-openai-chat-example");
+  const respan = await createRespan("typescript-azure-openai-chat-example");
   await respan.initialize();
 
   try {
@@ -18,14 +16,21 @@ export async function chatCompletionExample(): Promise<void> {
       const client = createAzureClient("gpt-4o-mini");
       return await client.chat.completions.create({
         model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: "You are concise." },
-          { role: "user", content: "Confirm Azure OpenAI tracing is active." },
-        ],
-        extraAttributes: {
-          "respan.metadata.azure_feature": "chat",
-        },
-      } as any);
+        messages: Array.from({ length: 76 }, (_, index) => ({
+          role: "user" as const,
+          content: `Context ${index}: explain why tracing Azure OpenAI requests is useful.`,
+        })),
+        tools: Array.from({ length: 76 }, (_, index) => ({
+          type: "function" as const,
+          function: {
+            name: `lookup_${index}`,
+            parameters: {
+              type: "object",
+              properties: { enabled: { type: "boolean", default: false } },
+            },
+          },
+        })),
+      });
     });
 
     logExampleResult(workflowName, {
@@ -34,7 +39,6 @@ export async function chatCompletionExample(): Promise<void> {
     });
   } finally {
     await respan.shutdown();
-    restoreMocks();
   }
 }
 

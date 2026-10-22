@@ -41,5 +41,6 @@ try {
     actual: errorMessage,
   });
 } finally {
+  bedrock.destroy();
   await shutdownRespan(respan);
 }
