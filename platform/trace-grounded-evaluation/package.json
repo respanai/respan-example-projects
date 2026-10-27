@@ -1,0 +1,13 @@
+{
+  "name": "respan-trace-grounded-evaluation-example",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "replay": "node example.ts",
+    "live": "node example.ts --live",
+    "test": "node --test test/*.test.mjs"
+  }
+}

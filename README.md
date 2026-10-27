@@ -48,6 +48,7 @@ fullstack/
                           # and generation over a fixed question set
 
 platform/
+  trace-grounded-evaluation/ # Offline judge replay and opt-in gateway calls over agent traces
   demo-setup-python/      # Python scripts for demo account setup (logging, datasets, evaluators, prompts)
   demo-setup-typescript/  # TypeScript scripts for demo account setup
   experiments/            # Experiment workflow notebooks
