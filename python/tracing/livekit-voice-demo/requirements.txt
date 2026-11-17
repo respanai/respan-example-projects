@@ -1,0 +1,9 @@
+# Published packages only (no workspace links): this demo proves what customers install.
+respan-ai==4.2.4
+respan-instrumentation-livekit==0.2.0
+livekit-agents==1.*
+livekit-plugins-openai==1.*   # the LLM, through the Respan gateway (OpenAI-compatible)
+livekit-plugins-silero==1.*
+python-dotenv>=1.0.1
+requests>=2.31
+faster-whisper==1.*
