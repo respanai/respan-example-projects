@@ -1,116 +1,125 @@
-"""Shared helpers for the dedicated Python Anthropic examples."""
+"""Local recording by default; explicit export uses the released Respan exporter."""
 
 from __future__ import annotations
 
+import json
 import os
-import sys
-from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from dotenv import load_dotenv
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-WORKSPACE_ROOT = PROJECT_ROOT.parent
-LOCAL_RESPAN_REPO = Path(os.getenv("RESPAN_REPO", WORKSPACE_ROOT / "respan"))
-for local_path in (
-    LOCAL_RESPAN_REPO / "python-sdks/respan-sdk/src",
-    LOCAL_RESPAN_REPO / "python-sdks/respan-tracing/src",
-    LOCAL_RESPAN_REPO / "python-sdks/respan/src",
-    LOCAL_RESPAN_REPO
-    / "python-sdks/instrumentations/respan-instrumentation-anthropic/src",
-):
-    if local_path.exists():
-        sys.path.insert(0, str(local_path))
-
-from anthropic import Anthropic
-from respan import Respan
+from _scenarios import SCENARIOS
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from respan_instrumentation_anthropic import AnthropicInstrumentor
-
-DEFAULT_RESPAN_BASE_URL = "https://api.respan.ai/api"
-DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
-_DEFAULT_RUN_ID = f"python-anthropic-{uuid4().hex[:8]}"
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE, RESPAN_METADATA
 
 
-def load_root_env() -> None:
-    load_dotenv(PROJECT_ROOT / ".env", override=True)
+class MarkerProcessor(SpanProcessor):
+    def __init__(self, marker: str, case: str):
+        self.marker = json.dumps(
+            {"run_id": marker, "integration": "anthropic", "case": case}
+        )
+
+    def on_start(self, span, parent_context=None):
+        span.set_attribute(RESPAN_METADATA, self.marker)
 
 
-def require_respan_api_key() -> str:
-    load_root_env()
-    api_key = os.getenv("RESPAN_API_KEY") or os.getenv("RESPAN_GATEWAY_API_KEY")
-    if not api_key:
-        raise RuntimeError("RESPAN_API_KEY must be set in the repo root .env file")
-    return api_key
+def run_example(case: str) -> None:
+    marker = os.getenv("RESPAN_EXAMPLE_RUN_ID", f"anthropic-{uuid4().hex}")
+    provider = TracerProvider()
+    provider.add_span_processor(MarkerProcessor(marker, case))
+    local = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(local))
+    wire = []
+    statuses = []
+    if os.getenv("RESPAN_EXAMPLE_EXPORT") == "1":
+        from dotenv import load_dotenv
+        from respan_tracing.exporters.respan import RespanSpanExporter
 
+        load_dotenv(
+            Path(
+                os.getenv(
+                    "RESPAN_EXAMPLE_ENV_FILE",
+                    Path(__file__).resolve().parents[3] / ".env",
+                )
+            ),
+            override=False,
+        )
+        key = os.getenv("RESPAN_API_KEY") or os.getenv("RESPAN_GATEWAY_API_KEY")
+        if not key:
+            raise RuntimeError("Set RESPAN_API_KEY to export controlled traces")
+        remote = RespanSpanExporter(
+            endpoint="https://api.respan.ai/api/v2/traces", api_key=key
+        )
+        original_post = remote._session.post
 
-def respan_base_url() -> str:
-    return os.getenv("RESPAN_BASE_URL", DEFAULT_RESPAN_BASE_URL).rstrip("/")
+        def post(*args, **kwargs):
+            # Observe the exporter's real body at its actual HTTP boundary.
+            body = json.loads(kwargs["data"])
+            result = original_post(*args, **kwargs)
+            wire.append(body)
+            statuses.append(result.status_code)
+            return result
 
-
-def anthropic_base_url() -> str:
-    explicit = os.getenv("RESPAN_ANTHROPIC_GATEWAY_BASE_URL")
-    if explicit:
-        return explicit.rstrip("/")
-    base_url = os.getenv("RESPAN_GATEWAY_BASE_URL", respan_base_url()).rstrip("/")
-    return base_url if base_url.endswith("/anthropic") else f"{base_url}/anthropic"
-
-
-def model_name() -> str:
-    return os.getenv("RESPAN_ANTHROPIC_MODEL", DEFAULT_MODEL)
-
-
-def example_run_id() -> str:
-    return os.getenv("RESPAN_EXAMPLE_RUN_ID") or _DEFAULT_RUN_ID
-
-
-def workflow_name(case_id: str) -> str:
-    return f"python_anthropic_{case_id}"
-
-
-def make_respan() -> Respan:
-    return Respan(
-        api_key=require_respan_api_key(),
-        base_url=respan_base_url(),
-        app_name="python-anthropic-examples",
-        instrumentations=[AnthropicInstrumentor()],
-        environment=os.getenv("RESPAN_ENVIRONMENT", "example"),
-        metadata={"integration": "anthropic", "run_id": example_run_id()},
+        remote._session.post = post
+        provider.add_span_processor(SimpleSpanProcessor(remote))
+    instrumentor = AnthropicInstrumentor(tracer_provider=provider)
+    instrumentor.activate()
+    try:
+        with provider.get_tracer("anthropic_examples").start_as_current_span(
+            f"anthropic_{case}", attributes={RESPAN_LOG_TYPE: "workflow"}
+        ):
+            result = SCENARIOS[case](provider)
+    finally:
+        instrumentor.deactivate()
+        provider.force_flush()
+        provider.shutdown()
+    spans = [
+        {
+            "name": s.name,
+            "trace_id": format(s.context.trace_id, "032x"),
+            "span_id": format(s.context.span_id, "016x"),
+            "parent_id": format(s.parent.span_id, "016x") if s.parent else None,
+            "attributes": dict(s.attributes),
+            "status": s.status.status_code.name,
+            "description": s.status.description,
+        }
+        for s in local.get_finished_spans()
+    ]
+    if case == "privacy":
+        calls = [span for span in spans if span["name"] == "anthropic.chat"]
+        assert len(calls) == 4
+        assert all(
+            "traceloop.entity.input" not in span["attributes"]
+            and "traceloop.entity.output" not in span["attributes"]
+            and span["description"] is None
+            for span in calls
+        )
+    evidence = {
+        "run_id": marker,
+        "case": case,
+        "result": result,
+        "spans": spans,
+        "actual_exporter_bodies": wire,
+        "http_statuses": statuses,
+    }
+    output = os.getenv("RESPAN_EXAMPLE_OUTPUT_DIR")
+    if output:
+        directory = Path(output)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{case}.json").write_text(json.dumps(evidence, indent=2))
+    if wire and not statuses or any(status != 200 for status in statuses):
+        raise AssertionError("Controlled export was not accepted by HTTP")
+    print(
+        json.dumps(
+            {
+                "case": case,
+                "run_id": marker,
+                "result": result,
+                "local_span_count": len(spans),
+                "export_body_count": len(wire),
+                "http_statuses": statuses,
+            }
+        )
     )
-
-
-def make_client() -> Anthropic:
-    return Anthropic(
-        api_key=require_respan_api_key(),
-        base_url=anthropic_base_url(),
-    )
-
-
-@contextmanager
-def example_attributes(respan: Respan, case_id: str):
-    run_id = example_run_id()
-    with respan.propagate_attributes(
-        custom_identifier=f"python-anthropic-{case_id}-{run_id}",
-        trace_group_identifier=workflow_name(case_id),
-        metadata={
-            "integration": "anthropic",
-            "case": case_id,
-            "run_id": run_id,
-        },
-    ):
-        yield run_id
-
-
-def message_text(message) -> str:
-    return "".join(
-        text
-        for block in message.content
-        if (text := getattr(block, "text", None))
-    )
-
-
-def print_result(case_id: str, value: str) -> None:
-    print(f"case={case_id}")
-    print(f"example_run_id={example_run_id()}")
-    print(f"workflow_name={workflow_name(case_id)}")
-    print(value)

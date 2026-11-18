@@ -1,77 +1,28 @@
-from __future__ import annotations
+import json
 
-from _shared import (
-    custom_attributes,
-    endpoint_name,
-    example_attributes,
-    json_bytes,
-    make_client,
-    make_custom_identifier,
-    make_respan,
-    print_result,
-    print_run_header,
-    read_json_body,
-    streaming_body,
-    stubbed_response,
-    workflow_name,
-)
-from respan import workflow
+from _native import client
+from _shared import Runtime
 
-EXAMPLE_NAME = "invoke-endpoint-text"
-
-
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _invoke_text_workflow(prompt: str) -> dict:
-    client = make_client()
-    request_body = json_bytes(
-        {
-            "inputs": prompt,
-            "parameters": {"max_new_tokens": 32, "temperature": 0.1},
-        }
-    )
-    params = {
-        "EndpointName": endpoint_name(),
-        "Body": request_body,
-        "ContentType": "application/json",
-        "Accept": "application/json",
-        "CustomAttributes": custom_attributes(),
-    }
-    response = {
-        "Body": streaming_body(
-            [
-                {
-                    "generated_text": "SageMaker observability links model calls to production traces.",
-                    "details": {"input_tokens": 9, "generated_tokens": 10},
-                }
-            ]
-        ),
-        "ContentType": "application/json",
-    }
-
-    try:
-        with stubbed_response(client, "invoke_endpoint", response, params):
-            result = client.invoke_endpoint(**params)
-            return {"response": read_json_body(result)}
-    finally:
-        client.close()
-
-
-def run_invoke_endpoint_text() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    result: dict = {}
-
-    try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            print_run_header(EXAMPLE_NAME, custom_identifier)
-            result = _invoke_text_workflow(
-                "Reply with one concise sentence about SageMaker observability."
+runtime = Runtime("01_text")
+try:
+    with runtime.workflow():
+        c, _, _ = client(
+            {
+                "generated_text": "native SageMaker text",
+                "usage": {"input_tokens": 0, "output_tokens": 2},
+            }
+        )
+        try:
+            result = c.invoke_endpoint(
+                EndpointName="controlled-endpoint",
+                Body=b'{"inputs":"native prompt"}',
+                ContentType="application/json",
             )
-    finally:
-        respan.shutdown()
-
-    print_result(EXAMPLE_NAME, custom_identifier, result)
-
-
-if __name__ == "__main__":
-    run_invoke_endpoint_text()
+            body = result["Body"]
+            assert body._amount_read == 0
+            assert json.loads(body.read())["generated_text"] == "native SageMaker text"
+            body.close()
+        finally:
+            c.close()
+finally:
+    runtime.close()

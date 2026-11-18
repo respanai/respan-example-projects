@@ -1,43 +1,14 @@
-# SageMaker Respan Tracing Examples
+# SageMaker Runtime tracing examples
 
-These examples cover Respan's SageMaker Runtime instrumentation package.
+Seven controlled scenarios call the real released boto3 client through botocore's native HTTP parser and CRC-correct event stream frames. They exercise text, full chat history/tool schemas/arguments, fragmented streams, async submission, 5001-dimensional embeddings, native errors/late privacy, and current SessionId/response routing fields. The minimum SDK skips SessionId only when its real service model lacks that member.
 
 ```bash
-cd python/tracing/sagemaker
 pip install -r requirements.txt
 python run_all.py
 ```
 
-For local package development, install from source instead:
+The assertions require the companion instrumentation update. For development, install only the target instrumentation editable or from its built wheel; keep boto3 and Respan companions released. Default runs record locally and make no hosted AWS requests. Set `RESPAN_EXAMPLE_REPORT_DIR` to save actual span trees.
 
-```bash
-pip install -e ../../../../respan/python-sdks/respan \
-            -e ../../../../respan/python-sdks/respan-sdk \
-            -e ../../../../respan/python-sdks/respan-tracing \
-            -e ../../../../respan/python-sdks/instrumentations/respan-instrumentation-sagemaker \
-            boto3 python-dotenv
-```
+Explicit `RESPAN_EXAMPLE_EXPORT=1` exports through released RespanSpanExporter using `RESPAN_API_KEY`; only this mode loads repository `.env` without overriding shell values. `RESPAN_EXAMPLE_RUN_ID` shares the exact lookup marker. Hosted endpoint/account permissions and arbitrary custom model protocols remain outside these controlled fixtures.
 
-The scripts load the repository root `.env` without overriding shell values.
-When `SAGEMAKER_ENDPOINT_NAME` is absent, they run in boto3 `Stubber` mode so
-the instrumentation can be validated without an AWS endpoint. Set
-`SAGEMAKER_EXAMPLE_MODE=live` and `SAGEMAKER_ENDPOINT_NAME` to exercise a real
-SageMaker Runtime endpoint.
-
-Set `SAGEMAKER_MODEL_ID` to the Respan-recognized model name you want attached
-to the trace for pricing. The examples fall back to `RESPAN_MODEL`, then
-`gpt-4o-mini`. This value is sent as SageMaker `CustomAttributes`
-(`respan_model=<model>`) so example request bodies stay compatible with real
-endpoints.
-
-## Scripts
-
-| Script | Coverage |
-| --- | --- |
-| `01_invoke_endpoint_text.py` | `InvokeEndpoint` with text generation payloads and token usage |
-| `02_invoke_endpoint_chat_tools.py` | `InvokeEndpoint` two-turn tool flow with a model tool call, decorated local tool execution, tool-result follow-up, and final answer |
-| `03_invoke_endpoint_stream.py` | `InvokeEndpointWithResponseStream` with event-stream output |
-| `04_invoke_endpoint_async.py` | `InvokeEndpointAsync` request and output-location metadata |
-
-`run_all.py` preserves one externally supplied `RESPAN_EXAMPLE_RUN_ID`, runs
-all four scenarios with per-process timeouts, and reports every failure.
+Native StreamingBody and EventStream objects, bytes, resources and exceptions are preserved. Data is observed as callers consume it. Source-zero usage is retained; absent usage/totals/models are not invented. Errors have no fabricated output, but actual earlier stream data can remain. Backend status, redaction and indexing require separate same-run MCP acceptance.

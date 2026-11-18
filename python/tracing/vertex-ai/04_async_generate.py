@@ -1,38 +1,39 @@
-from __future__ import annotations
-
 import asyncio
 
-from _shared import (
-    deterministic_model,
-    deterministic_vertex_runtime,
-    example_attributes,
-    make_respan,
-    marker_for,
-    workflow_name,
-)
+from _fixtures import NativeRuntime
+from _shared import create_respan, example_context, finish_respan
 from respan import workflow
 
-EXAMPLE_NAME = "async-generate"
 
+async def main():
+    native = NativeRuntime()
+    respan = create_respan()
+    model, channel = await native.async_model()
 
-@workflow(name=workflow_name(EXAMPLE_NAME))
-async def async_generate(prompt: str) -> str:
-    model = deterministic_model()
-    response = await model.generate_content_async(prompt)
-    return response.text
+    @workflow(name="vertexai_async")
+    async def generate(prompt):
+        assert (await model.generate_content_async(prompt)).text == "native response"
+        chat = model.start_chat()
+        assert (await chat.send_message_async(prompt)).text == "native response"
+        stream = await model.generate_content_async(prompt, stream=True)
+        chunks = [chunk async for chunk in stream]
+        assert len(chunks) == 70
+        partial = await model.generate_content_async(prompt, stream=True)
+        await partial.__anext__()
+        await partial.aclose()
+        unread = await model.generate_content_async(prompt, stream=True)
+        await unread.aclose()
+        return "".join(chunk.text for chunk in chunks)
 
-
-async def run() -> None:
-    marker = marker_for(EXAMPLE_NAME)
-    with deterministic_vertex_runtime():
-        respan = make_respan(EXAMPLE_NAME, marker)
-        try:
-            with example_attributes(EXAMPLE_NAME, marker):
-                result = await async_generate("Trace an async Vertex response.")
-        finally:
-            respan.shutdown()
-    print({"example": EXAMPLE_NAME, "marker": marker, "result": result}, flush=True)
+    try:
+        with example_context("async"):
+            assert (await generate("hello")).endswith("69,")
+        print("async: generation/chat/70-chunk stream and aclose preserved")
+    finally:
+        await channel.close()
+        native.close()
+        finish_respan(respan)
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    asyncio.run(main())

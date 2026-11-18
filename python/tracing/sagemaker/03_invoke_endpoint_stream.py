@@ -1,80 +1,60 @@
-from __future__ import annotations
-
 import json
 
-from _shared import (
-    collect_stream_text,
-    custom_attributes,
-    endpoint_name,
-    example_attributes,
-    json_bytes,
-    make_client,
-    make_custom_identifier,
-    make_respan,
-    print_result,
-    print_run_header,
-    stubbed_response,
-    workflow_name,
-)
-from respan import workflow
+from _native import client, frame
+from _shared import Runtime
+from botocore.eventstream import EventStream
 
-EXAMPLE_NAME = "invoke-endpoint-stream"
-
-
-@workflow(name=workflow_name(EXAMPLE_NAME))
-def _invoke_stream_workflow(prompt: str) -> dict:
-    client = make_client()
-    request_body = json_bytes({"inputs": prompt})
-    params = {
-        "EndpointName": endpoint_name(),
-        "Body": request_body,
-        "ContentType": "application/json",
-        "Accept": "application/json",
-        "CustomAttributes": custom_attributes(),
-    }
-    response = {
-        "Body": {
-            "PayloadPart": {
-                "Bytes": json.dumps(
-                    {
-                        "token": {
-                            "text": "Streaming SageMaker responses still become one traceable output."
-                        },
-                        "usage": {"input_tokens": 7, "generated_tokens": 9},
-                    }
-                ).encode("utf-8")
+runtime = Runtime("03_stream")
+frames = [
+    {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": "native ",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "controlled-stream-id",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": '{"false":'},
+                        }
+                    ],
+                },
             }
-        },
-        "ContentType": "application/json",
-    }
-
-    try:
-        with stubbed_response(
-            client,
-            "invoke_endpoint_with_response_stream",
-            response,
-            params,
-        ):
-            result = client.invoke_endpoint_with_response_stream(**params)
-            return {"stream_text": collect_stream_text(result)}
-    finally:
-        client.close()
-
-
-def run_invoke_endpoint_stream() -> None:
-    respan = make_respan(EXAMPLE_NAME)
-    custom_identifier = make_custom_identifier(EXAMPLE_NAME)
-    result: dict = {}
-
-    try:
-        with example_attributes(EXAMPLE_NAME, custom_identifier):
-            print_run_header(EXAMPLE_NAME, custom_identifier)
-            result = _invoke_stream_workflow("Stream a concise SageMaker sentence.")
-    finally:
-        respan.shutdown()
-
-    print_result(EXAMPLE_NAME, custom_identifier, result)
-
-
-if __name__ == "__main__":
-    run_invoke_endpoint_stream()
+        ]
+    },
+    {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "content": "stream",
+                    "tool_calls": [
+                        {"index": 0, "function": {"arguments": 'false,"zero":0}'}}
+                    ],
+                },
+            }
+        ],
+        "usage": {"input_tokens": 0, "output_tokens": 2},
+    },
+]
+data = b"".join((json.dumps(v) + "\n").encode() for v in frames)
+wire = frame(data[:19]) + frame(data[19:31]) + frame(data[31:])
+try:
+    with runtime.workflow():
+        c, _, _ = client(events=wire)
+        try:
+            result = c.invoke_endpoint_with_response_stream(
+                EndpointName="controlled-endpoint",
+                Body=b'{"messages":[{"role":"user","content":"native"}]}',
+                ContentType="application/json",
+            )
+            assert type(result["Body"]) is EventStream
+            assert b"".join(e["PayloadPart"]["Bytes"] for e in result["Body"]) == data
+            result["Body"].close()
+        finally:
+            c.close()
+finally:
+    runtime.close()

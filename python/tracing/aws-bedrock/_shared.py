@@ -1,258 +1,188 @@
+"""Native botocore fixtures and local-first OpenTelemetry example lifecycle."""
+
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
+import struct
 import uuid
+import zlib
 from pathlib import Path
-from typing import Any
 
 import boto3
-from botocore.response import StreamingBody
-from botocore.stub import Stubber
-from dotenv import load_dotenv
-from respan import Respan
+from botocore.awsrequest import AWSResponse
+from botocore.config import Config
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.semconv_ai import SpanAttributes
 from respan_instrumentation_aws_bedrock import AWSBedrockInstrumentor
-
+from respan_sdk.constants.llm_logging import LOG_TYPE_WORKFLOW
+from respan_sdk.constants.span_attributes import RESPAN_LOG_TYPE, RESPAN_METADATA
+from urllib3.response import HTTPResponse
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = EXAMPLE_DIR.parents[2]
-load_dotenv(REPO_ROOT / ".env")
-
-DEFAULT_MODEL_ID = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
-DEFAULT_REGION = "us-east-1"
 
 
-def get_model_id() -> str:
-    return os.getenv("AWS_BEDROCK_MODEL_ID") or os.getenv("BEDROCK_MODEL_ID") or DEFAULT_MODEL_ID
-
-
-def get_region() -> str:
-    return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or DEFAULT_REGION
-
-
-def should_use_stubs() -> bool:
-    explicit = os.getenv("AWS_BEDROCK_USE_STUBS")
-    if explicit is not None:
-        return explicit.lower() not in {"0", "false", "no"}
-    return not (os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("AWS_PROFILE"))
-
-
-def new_run_id(example_name: str) -> str:
-    return os.getenv("RESPAN_EXAMPLE_RUN_ID") or f"{example_name}-{uuid.uuid4().hex[:10]}"
-
-
-def create_respan(*, example_name: str, run_id: str) -> Respan:
-    return Respan(
-        app_name="aws-bedrock-examples",
-        instrumentations=[AWSBedrockInstrumentor()],
-        metadata={
-            "example_set": "aws-bedrock",
-            "example_name": example_name,
-            "run_id": run_id,
-        },
-        environment=os.getenv("RESPAN_ENVIRONMENT", "examples"),
-    )
-
-
-def create_bedrock_client():
-    kwargs: dict[str, Any] = {"region_name": get_region()}
-    if should_use_stubs():
-        kwargs.update(
-            {
-                "aws_access_key_id": "stub-access-key",
-                "aws_secret_access_key": "stub-secret-key",
-                "aws_session_token": "stub-session-token",
-            }
+def create_bedrock_client(*, live=False):
+    if live:
+        return boto3.client(
+            "bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1")
         )
-    return boto3.client("bedrock-runtime", **kwargs)
-
-
-def anthropic_messages_body(prompt: str, *, max_tokens: int = 96) -> str:
-    return json.dumps(
-        {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        }
+    return boto3.client(
+        "bedrock-runtime",
+        region_name="us-east-1",
+        aws_access_key_id="controlled",
+        aws_secret_access_key="controlled",
+        endpoint_url="https://bedrock-runtime.invalid",
+        config=Config(retries={"max_attempts": 0}),
     )
 
 
-def _streaming_body(payload: dict[str, Any]) -> StreamingBody:
-    body = json.dumps(payload).encode("utf-8")
-    return StreamingBody(io.BytesIO(body), len(body))
+def get_model_id():
+    return os.getenv("AWS_BEDROCK_MODEL_ID", "anthropic.controlled")
 
 
-def maybe_stub_invoke_model(client, *, model_id: str, body: str) -> Stubber | None:
-    if not should_use_stubs():
-        return None
+def frame(kind, payload, *, message_type="event"):
+    headers = b""
+    for key, data in (
+        (":message-type", message_type),
+        (":event-type", kind),
+        (":content-type", "application/json"),
+    ):
+        key, data = key.encode(), data.encode()
+        headers += (
+            bytes([len(key)]) + key + b"\x07" + struct.pack(">H", len(data)) + data
+        )
+    encoded = json.dumps(payload).encode()
+    prelude = struct.pack(">II", 16 + len(headers) + len(encoded), len(headers))
+    encoded = prelude + struct.pack(">I", zlib.crc32(prelude)) + headers + encoded
+    return encoded + struct.pack(">I", zlib.crc32(encoded))
 
-    stubber = Stubber(client)
-    stubber.add_response(
-        "invoke_model",
-        {
-            "body": _streaming_body(
-                {
-                    "id": "stubbed-bedrock-message",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Stubbed Bedrock response for invoke_model.",
-                        }
-                    ],
-                    "usage": {"input_tokens": 8, "output_tokens": 9},
-                }
+
+def transport(client, payload, *, status=200, event_stream=False):
+    raw = payload if type(payload) is bytes else json.dumps(payload).encode()
+    headers = {
+        "content-type": "application/vnd.amazon.eventstream"
+        if event_stream
+        else "application/json",
+        "content-length": str(len(raw)),
+    }
+    response = AWSResponse(
+        "https://bedrock-runtime.invalid",
+        status,
+        headers,
+        HTTPResponse(body=io.BytesIO(raw), preload_content=False),
+    )
+    client._endpoint.http_session.send = lambda request: response
+    return response
+
+
+def event_frames(events, *, invoke=False):
+    if invoke:
+        return b"".join(
+            frame(
+                "chunk",
+                {"bytes": base64.b64encode(json.dumps(event).encode()).decode()},
+            )
+            for event in events
+        )
+    return b"".join(frame(kind, payload) for kind, payload in events)
+
+
+def runtime(case):
+    provider = TracerProvider()
+    local = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(local))
+    if os.getenv("RESPAN_EXAMPLE_EXPORT") == "1":
+        from dotenv import load_dotenv
+        from respan_tracing.exporters.respan import RespanSpanExporter
+
+        load_dotenv(
+            Path(
+                os.getenv(
+                    "RESPAN_EXAMPLE_ENV_FILE", str(EXAMPLE_DIR.parents[2] / ".env")
+                )
             ),
-            "contentType": "application/json",
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-        },
-        {
-            "modelId": model_id,
-            "body": body,
-            "contentType": "application/json",
-            "accept": "application/json",
-        },
-    )
-    stubber.activate()
-    return stubber
+            override=False,
+        )
+        if not os.getenv("RESPAN_API_KEY"):
+            raise RuntimeError("RESPAN_API_KEY is required for explicit export")
+        exporter = RespanSpanExporter(
+            api_key=os.environ["RESPAN_API_KEY"],
+            endpoint="https://api.respan.ai/api/v2/traces",
+        )
+        wire_path = os.getenv("RESPAN_EXAMPLE_WIRE_PATH")
+        if wire_path:
+            actual_post = exporter._session.post
 
+            def observe(url, *args, **kwargs):
+                body = kwargs.get("json")
+                if body is None and kwargs.get("data") is not None:
+                    body = json.loads(kwargs["data"])
+                # These are the exporter's actual HTTP bodies, never rebuilt OTLP.
+                with open(wire_path, "a", encoding="utf-8") as file:
+                    file.write(json.dumps(body) + "\n")
+                response = actual_post(url, *args, **kwargs)
+                status_path = os.getenv("RESPAN_EXAMPLE_HTTP_PATH")
+                if status_path:
+                    with open(status_path, "a", encoding="utf-8") as file:
+                        file.write(
+                            json.dumps({"status_code": response.status_code}) + "\n"
+                        )
+                return response
 
-def maybe_stub_converse(client, *, model_id: str, messages: list[dict[str, Any]]) -> Stubber | None:
-    if not should_use_stubs():
-        return None
-
-    stubber = Stubber(client)
-    expected_params = {
-        "modelId": model_id,
-        "messages": messages,
-        "inferenceConfig": {"maxTokens": 96},
+            exporter._session.post = observe
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = AWSBedrockInstrumentor(tracer_provider=provider)
+    instrumentor.activate()
+    marker = os.getenv("RESPAN_EXAMPLE_RUN_ID", "bedrock-local-" + uuid.uuid4().hex)
+    attrs = {
+        RESPAN_METADATA: json.dumps(
+            {"run_id": marker, "example_set": "aws-bedrock", "example_case": case}
+        ),
+        RESPAN_LOG_TYPE: LOG_TYPE_WORKFLOW,
+        SpanAttributes.TRACELOOP_SPAN_KIND: "workflow",
+        SpanAttributes.TRACELOOP_ENTITY_NAME: case,
+        SpanAttributes.TRACELOOP_ENTITY_PATH: "",
     }
-    stubber.add_response(
-        "converse",
-        {
-            "output": {
-                "message": {
-                    "role": "assistant",
-                    "content": [{"text": "Stubbed Bedrock response for converse."}],
-                }
-            },
-            "stopReason": "end_turn",
-            "usage": {"inputTokens": 10, "outputTokens": 11, "totalTokens": 21},
-            "metrics": {"latencyMs": 12},
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-        },
-        expected_params,
-    )
-    stubber.activate()
-    return stubber
+    return provider, local, instrumentor, marker, attrs
 
 
-def maybe_stub_converse_stream(
-    client,
-    *,
-    model_id: str,
-    messages: list[dict[str, Any]],
-) -> Stubber | None:
-    if not should_use_stubs():
-        return None
-
-    stubber = Stubber(client)
-    expected_params = {
-        "modelId": model_id,
-        "messages": messages,
-        "inferenceConfig": {"maxTokens": 96},
-    }
-    stubber.add_response(
-        "converse_stream",
-        {
-            "stream": {
-                "contentBlockDelta": {
-                    "contentBlockIndex": 0,
-                    "delta": {"text": "Stubbed stream."},
-                },
-                "metadata": {
-                    "usage": {
-                        "inputTokens": 12,
-                        "outputTokens": 13,
-                        "totalTokens": 25,
-                    },
-                    "metrics": {"latencyMs": 7},
-                },
-            },
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-        },
-        expected_params,
-    )
-    stubber.activate()
-    return stubber
-
-
-def maybe_stub_converse_tool(
-    client,
-    *,
-    model_id: str,
-    messages: list[dict[str, Any]],
-    tool_config: dict[str, Any],
-) -> Stubber | None:
-    if not should_use_stubs():
-        return None
-
-    stubber = Stubber(client)
-    stubber.add_response(
-        "converse",
-        {
-            "output": {
-                "message": {
-                    "role": "assistant",
-                    "content": [
+def run_case(case, action):
+    provider, local, instrumentor, marker, attrs = runtime(case)
+    try:
+        with provider.get_tracer("bedrock.examples").start_as_current_span(
+            case, attributes=attrs
+        ):
+            result = action(provider)
+        provider.force_flush()
+        spans = local.get_finished_spans()
+        output_path = os.getenv("RESPAN_EXAMPLE_LOCAL_PATH")
+        if output_path:
+            with open(output_path, "a", encoding="utf-8") as file:
+                file.writelines(
+                    json.dumps(
                         {
-                            "toolUse": {
-                                "toolUseId": "tooluse-weather-1",
-                                "name": "get_weather",
-                                "input": {"city": "Tokyo"},
-                            }
+                            "case": case,
+                            "run_id": marker,
+                            "name": span.name,
+                            "trace_id": f"{span.context.trace_id:032x}",
+                            "span_id": f"{span.context.span_id:016x}",
+                            "parent_id": f"{span.parent.span_id:016x}"
+                            if span.parent
+                            else None,
+                            "status": span.status.status_code.name,
+                            "attributes": dict(span.attributes),
                         }
-                    ],
-                }
-            },
-            "stopReason": "tool_use",
-            "usage": {"inputTokens": 14, "outputTokens": 6, "totalTokens": 20},
-            "metrics": {"latencyMs": 8},
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-        },
-        {
-            "modelId": model_id,
-            "messages": messages,
-            "toolConfig": tool_config,
-            "inferenceConfig": {"maxTokens": 96},
-        },
-    )
-    stubber.activate()
-    return stubber
-
-
-def maybe_stub_converse_error(
-    client,
-    *,
-    model_id: str,
-    messages: list[dict[str, Any]],
-) -> Stubber | None:
-    if not should_use_stubs():
-        return None
-
-    stubber = Stubber(client)
-    stubber.add_client_error(
-        "converse",
-        service_error_code="ResourceNotFoundException",
-        service_message="The requested model was not found.",
-        http_status_code=404,
-        expected_params={"modelId": model_id, "messages": messages},
-    )
-    stubber.activate()
-    return stubber
-
-
-def deactivate_stubber(stubber: Stubber | None) -> None:
-    if stubber is not None:
-        stubber.deactivate()
+                    )
+                    + "\n"
+                    for span in spans
+                )
+        print(f"{case}: {result}; spans={len(spans)}; run_id={marker}")
+    finally:
+        instrumentor.deactivate()
+        provider.shutdown()
+    return marker
