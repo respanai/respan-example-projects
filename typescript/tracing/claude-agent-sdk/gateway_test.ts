@@ -6,7 +6,7 @@
  */
 
 import "dotenv/config";
-import { queryForResult } from "./_sdk_runtime";
+import { queryForResult } from "./_sdk_runtime.js";
 
 const API_KEY = process.env.RESPAN_API_KEY;
 const BASE_URL = (process.env.RESPAN_GATEWAY_BASE_URL || process.env.RESPAN_BASE_URL || "https://api.respan.ai/api").replace(/\/+$/, "");
