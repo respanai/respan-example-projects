@@ -1,0 +1,4 @@
+ai[openai,otel]==0.8.0
+respan-tracing>=2.20.0
+respan-instrumentation-vercel
+python-dotenv>=1.0.0
