@@ -12,19 +12,24 @@
     "06:file-change": "tsx 06_workspace_file_change.ts",
     "07:error": "tsx 07_expected_error.ts",
     "examples": "tsx run_all.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "08:privacy": "tsx 08_privacy_and_lifecycle.ts",
+    "09:current": "tsx 09_current_sdk_options.ts"
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.141.0",
+    "@openai/codex-sdk": "^0.162.1",
     "@respan/instrumentation-codex-sdk": "file:../../../../respan/javascript-sdks/instrumentations/respan-instrumentation-codex-sdk",
-    "@respan/respan": "file:../../../../respan/javascript-sdks/respan",
-    "@respan/respan-sdk": "file:../../../../respan/javascript-sdks/respan-sdk",
-    "@respan/tracing": "file:../../../../respan/javascript-sdks/respan-tracing",
-    "dotenv": "^16.4.7",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "@respan/respan": "^2.5.0",
+    "@respan/respan-sdk": "^1.3.4",
+    "@respan/tracing": "^1.6.1",
+    "dotenv": "^16.4.7"
   },
   "devDependencies": {
-    "@types/node": "^22.15.29"
+    "@types/node": "^22.15.29",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/core": "^2.10.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
   }
 }

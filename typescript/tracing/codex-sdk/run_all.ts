@@ -1,8 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-const exampleDir = path.dirname(fileURLToPath(import.meta.url));
+const dir = path.dirname(fileURLToPath(import.meta.url));
 const scripts = [
   "01_basic_turn.ts",
   "02_streamed_turn.ts",
@@ -11,27 +10,21 @@ const scripts = [
   "05_resume_thread.ts",
   "06_workspace_file_change.ts",
   "07_expected_error.ts",
+  "08_privacy_and_lifecycle.ts",
+  "09_current_sdk_options.ts",
 ];
-
 for (const script of scripts) {
-  await runScript(script);
-}
-
-function runScript(script: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      ["--import", "tsx", path.join(exampleDir, script)],
-      {
-        cwd: exampleDir,
-        env: process.env,
-        stdio: "inherit",
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", path.join(dir, script)],
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        OTEL_METRICS_EXPORTER: "none",
+        OTEL_LOGS_EXPORTER: "none",
       },
-    );
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${script} exited with code ${code}`));
-    });
-  });
+    },
+  );
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }

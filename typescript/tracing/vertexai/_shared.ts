@@ -1,271 +1,425 @@
-import dotenv from "dotenv";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as genai from "@google/genai";
+import * as legacy from "@google-cloud/vertexai";
 import { VertexAIInstrumentor } from "@respan/instrumentation-vertexai";
-import { Respan } from "@respan/respan";
-import { FakeVertexAIModule, VertexAI as FakeVertexAI } from "./_fake_vertexai.js";
-
-const DEFAULT_BASE_URL = "https://api.respan.ai/api";
-const DEFAULT_LOCATION = "us-central1";
-const DEFAULT_MODEL = "gemini-2.0-flash";
-
-export const EXAMPLE_RUN_ID =
-  process.env.RESPAN_EXAMPLE_RUN_ID ?? `vertexai-ts-${Date.now()}`;
-
-let rootEnvLoaded = false;
-let respanLogsSuppressed = false;
-const originalConsoleDebug = console.debug.bind(console);
-const originalConsoleInfo = console.info.bind(console);
-const originalConsoleLog = console.log.bind(console);
-
-export interface VertexExampleRuntime {
-  mode: "fake" | "real";
-  model: any;
-  respan: Respan;
-}
-
-export interface VertexModelOptions {
-  generationConfig?: Record<string, unknown>;
-  model?: string;
-  systemInstruction?: unknown;
-  tools?: unknown[];
-}
-
-export const WEATHER_TOOL = {
-  functionDeclarations: [
-    {
-      name: "lookup_weather",
-      description: "Look up a compact weather summary for a city.",
-      parameters: {
-        type: "object",
-        properties: {
-          city: {
-            type: "string",
-            description: "City name",
-          },
-        },
-        required: ["city"],
-      },
-    },
-  ],
-};
-
-function suppressExampleRespanLogs(): void {
-  if (respanLogsSuppressed || process.env.RESPAN_EXAMPLE_DEBUG === "true") {
-    return;
-  }
-
-  console.debug = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("[Respan Debug]")) {
-      return;
-    }
-    originalConsoleDebug(...args);
-  };
-
-  console.info = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]")) {
-      return;
-    }
-    originalConsoleInfo(...args);
-  };
-
-  console.log = (...args: unknown[]) => {
-    const firstArg = typeof args[0] === "string" ? args[0] : "";
-    if (firstArg.startsWith("[Respan]") || firstArg.startsWith("Respan tracing")) {
-      return;
-    }
-    originalConsoleLog(...args);
-  };
-
-  respanLogsSuppressed = true;
-}
-
-export function loadRootEnv(): void {
-  if (rootEnvLoaded) return;
-
-  const startDir = dirname(fileURLToPath(import.meta.url));
-  let currentDir = startDir;
-
-  for (let depth = 0; depth < 8; depth += 1) {
-    const envPath = join(currentDir, ".env");
-    if (existsSync(envPath)) {
-      dotenv.config({ path: envPath, override: false, quiet: true });
-      rootEnvLoaded = true;
-      return;
-    }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) break;
-    currentDir = parentDir;
-  }
-
-  dotenv.config({ override: false, quiet: true });
-  rootEnvLoaded = true;
-}
-
-function requireRespanApiKey(): string {
-  const apiKey = process.env.RESPAN_API_KEY ?? process.env.RESPAN_GATEWAY_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "RESPAN_API_KEY or RESPAN_GATEWAY_API_KEY is required in respan-example-projects/.env.",
-    );
-  }
-  return apiKey;
-}
-
-function respanBaseUrl(): string {
-  return process.env.RESPAN_BASE_URL ?? process.env.RESPAN_GATEWAY_BASE_URL ?? DEFAULT_BASE_URL;
-}
-
-function googleProject(): string | undefined {
-  return process.env.GOOGLE_CLOUD_PROJECT ??
-    process.env.GOOGLE_VERTEXAI_PROJECT ??
-    process.env.GCLOUD_PROJECT;
-}
-
-function googleLocation(): string {
-  return process.env.GOOGLE_CLOUD_LOCATION ??
-    process.env.GOOGLE_VERTEXAI_LOCATION ??
-    DEFAULT_LOCATION;
-}
-
-function vertexModelName(model?: string): string {
-  return model ??
-    process.env.VERTEXAI_MODEL ??
-    process.env.GOOGLE_VERTEXAI_MODEL ??
-    DEFAULT_MODEL;
-}
-
-function shouldUseFakeVertex(): boolean {
-  return process.env.VERTEXAI_EXAMPLE_MODE === "fake";
-}
-
-function requireGoogleProject(): string {
-  const project = googleProject();
-  if (!project) {
-    throw new Error(
-      "Google Vertex AI examples require GOOGLE_CLOUD_PROJECT or GOOGLE_VERTEXAI_PROJECT in respan-example-projects/.env. " +
-        "Set VERTEXAI_EXAMPLE_MODE=fake only when you intentionally want the deterministic instrumentation smoke mode.",
-    );
-  }
+import { setup, actualTool, assert, live } from "./_runtime.js";
+function requireLiveProject(): string {
+  const project = process.env.GOOGLE_CLOUD_PROJECT;
+  if (!project)
+    throw new Error("Live Vertex examples require GOOGLE_CLOUD_PROJECT.");
   return project;
 }
-
-export async function createVertexExampleRuntime(
-  appName: string,
-  options: VertexModelOptions = {},
-): Promise<VertexExampleRuntime> {
-  loadRootEnv();
-  suppressExampleRespanLogs();
-
-  const modelName = vertexModelName(options.model);
-
-  if (!shouldUseFakeVertex()) {
-    const project = requireGoogleProject();
-    const vertexModule = await import("@google-cloud/vertexai");
-    const instrumentor = new VertexAIInstrumentor({ sdkModule: vertexModule as any });
-    const respan = new Respan({
-      apiKey: requireRespanApiKey(),
-      baseURL: respanBaseUrl(),
-      appName,
-      instrumentations: [instrumentor],
-      silenceInitializationMessage: true,
-    });
-    await respan.initialize();
-
-    const vertexAI = new vertexModule.VertexAI({
-      project,
-      location: googleLocation(),
-    });
-    const model = vertexAI.getGenerativeModel({
-      model: modelName,
-      generationConfig: options.generationConfig,
-      systemInstruction: options.systemInstruction,
-      tools: options.tools,
-    } as any);
-
-    return { mode: "real", model, respan };
-  }
-
-  const instrumentor = new VertexAIInstrumentor({ sdkModule: FakeVertexAIModule as any });
-  const respan = new Respan({
-    apiKey: requireRespanApiKey(),
-    baseURL: respanBaseUrl(),
-    appName,
-    instrumentations: [instrumentor],
-    silenceInitializationMessage: true,
-  });
-  await respan.initialize();
-
-  const vertexAI = new FakeVertexAI();
-  const model = vertexAI.getGenerativeModel({
-    model: modelName,
-    generationConfig: options.generationConfig,
-    systemInstruction: options.systemInstruction,
-    tools: options.tools,
-  });
-  return { mode: "fake", model, respan };
-}
-
-export async function runWithExampleTrace<T>(
-  respan: Respan,
-  workflowName: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  return await respan.propagateAttributes(
-    {
-      custom_identifier: EXAMPLE_RUN_ID,
-      trace_group_identifier: workflowName,
-      metadata: {
-        example: "typescript-vertexai",
-        run_id: EXAMPLE_RUN_ID,
-        workflow_name: workflowName,
-      },
-    },
-    () => respan.withWorkflow({ name: workflowName }, fn),
+const authClient = {
+  async getAccessToken() {
+    return { token: "fixture-only" };
+  },
+  async getRequestHeaders() {
+    return new Headers({ Authorization: "Bearer fixture-only" });
+  },
+};
+const response = (parts: any[] = [{ text: "Fixture answer" }]) => ({
+  responseId: "native-fixture-response",
+  modelVersion: "fixture-response-model",
+  candidates: [
+    { index: 0, finishReason: "STOP", content: { role: "model", parts } },
+  ],
+  usageMetadata: {
+    promptTokenCount: 4,
+    candidatesTokenCount: 5,
+    totalTokenCount: 17,
+    thoughtsTokenCount: 2,
+    cachedContentTokenCount: 3,
+  },
+});
+export async function runExample(scenario: number) {
+  const privateContent = scenario === 8;
+  const runtime = await setup(
+    new VertexAIInstrumentor({
+      sdkModule: legacy,
+      genaiModule: genai,
+      traceContent: !privateContent,
+    }),
+    privateContent,
   );
-}
-
-export async function flushAndShutdown(
-  respan: Pick<Respan, "shutdown">,
-): Promise<void> {
-  await respan.shutdown();
-}
-
-export function logExampleResult(
-  workflowName: string,
-  details: Record<string, unknown>,
-): void {
-  console.log(JSON.stringify({ workflowName, runId: EXAMPLE_RUN_ID, ...details }, null, 2));
-}
-
-export async function responseFromResult(result: any): Promise<any> {
-  return await Promise.resolve(result?.response ?? result);
-}
-
-export function textFromResponse(response: any): string {
-  const textProp = response?.text;
-  if (typeof textProp === "string") return textProp;
-  if (typeof textProp === "function") {
-    try {
-      const text = textProp.call(response);
-      if (typeof text === "string") return text;
-    } catch {
-      // Fall back to candidates.
-    }
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  if (!live)
+    globalThis.fetch = async (url, options) => {
+      const path = String(url);
+      const body =
+        typeof options?.body === "string" ? JSON.parse(options.body) : {};
+      requests++;
+      if (path.includes("fixture-error"))
+        return Response.json(
+          {
+            error: {
+              code: 429,
+              message: "Controlled Vertex error",
+              status: "RESOURCE_EXHAUSTED",
+            },
+          },
+          { status: 429 },
+        );
+      if (path.includes(":predictLongRunning"))
+        return Response.json({
+          name: "projects/fixture/locations/us-central1/publishers/google/models/veo/operations/native-operation",
+          done: false,
+        });
+      if (path.includes("text-embedding"))
+        return Response.json({
+          predictions: [
+            {
+              embeddings: {
+                values: Array.from({ length: 5001 }, (_, i) => i / 5001),
+                statistics: { token_count: 7, truncated: false },
+              },
+            },
+          ],
+        });
+      if (path.includes(":predict"))
+        return Response.json({
+          predictions: [
+            { bytesBase64Encoded: "fixture-image", mimeType: "image/png" },
+          ],
+        });
+      if (path.includes(":streamGenerateContent"))
+        return new Response(
+          [
+            response([{ text: "first " }]),
+            response([
+              { text: "answer", thoughtSignature: "native-signature" },
+            ]),
+          ]
+            .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      const parts =
+        body.contents?.flatMap((content: any) => content.parts ?? []) ?? [];
+      const functions =
+        body.tools?.flatMap((tool: any) => tool.functionDeclarations ?? []) ??
+        [];
+      if (functions.length && !parts.some((part: any) => part.functionResponse))
+        return Response.json(
+          response([
+            {
+              functionCall: {
+                id: "native-weather-call",
+                name: functions[0].name,
+                args: { city: "Tokyo" },
+              },
+            },
+          ]),
+        );
+      return Response.json(
+        response([
+          {
+            text: "Fixture reasoning",
+            thought: true,
+            thoughtSignature: "native-thought-signature",
+          },
+          { text: "Fixture answer" },
+          {
+            inlineData: { mimeType: "image/png", data: "fixture-output-image" },
+          },
+        ]),
+      );
+    };
+  const client = new genai.GoogleGenAI(
+    live
+      ? {
+          vertexai: true,
+          project: requireLiveProject(),
+          location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
+        }
+      : {
+          vertexai: true,
+          project: "fixture-project",
+          location: "us-central1",
+          googleAuthOptions: { authClient: authClient as any },
+        },
+  );
+  const model = process.env.VERTEXAI_MODEL ?? "gemini-fixture";
+  try {
+    await runtime.run(`vertexai-${scenario}`, async () => {
+      if (scenario === 1) {
+        const result = await client.models.generateContent({
+          model,
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: "Fixture multimodal prompt" },
+                {
+                  inlineData: {
+                    mimeType: "image/png",
+                    data: "fixture-input-image",
+                  },
+                },
+              ],
+            },
+          ],
+          config: {
+            systemInstruction: "Fixture system instruction",
+            temperature: 0,
+            maxOutputTokens: 64,
+          },
+        });
+        assert.ok(result.candidates?.length);
+      }
+      if (scenario === 2) {
+        const stream = await client.models.generateContentStream({
+          model,
+          contents: "Fixture streaming",
+        });
+        let count = 0;
+        for await (const chunk of stream) {
+          assert.ok(chunk);
+          count++;
+        }
+        assert.ok(count);
+        const early = await client.models.generateContentStream({
+          model,
+          contents: "Early return",
+        });
+        for await (const chunk of early) {
+          assert.ok(chunk);
+          break;
+        }
+      }
+      if (scenario === 3) {
+        const chat = client.chats.create({
+          model,
+          config: {
+            tools: [
+              {
+                functionDeclarations: [
+                  {
+                    name: "weather",
+                    parameters: {
+                      type: genai.Type.OBJECT,
+                      properties: { city: { type: genai.Type.STRING } },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+        const first = await chat.sendMessage({ message: "Weather Tokyo" });
+        const call = first.functionCalls?.[0];
+        assert.ok(call, "Native response must supply the function call.");
+        const result = { temperature: 0, city: "Tokyo" };
+        await chat.sendMessage({
+          message: [
+            {
+              functionResponse: {
+                id: call.id,
+                name: call.name,
+                response: result,
+              },
+            },
+          ],
+        });
+      }
+      if (scenario === 4) {
+        await assert.rejects(
+          client.models.generateContent({
+            model: "fixture-error",
+            contents: "Controlled native provider error",
+          }),
+        );
+      }
+      if (scenario === 5) {
+        let callbacks = 0;
+        const callable = {
+          async tool() {
+            return {
+              functionDeclarations: [
+                {
+                  name: "weather",
+                  parameters: {
+                    type: genai.Type.OBJECT,
+                    properties: { city: { type: genai.Type.STRING } },
+                  },
+                },
+              ],
+            };
+          },
+          async callTool(calls: any[]) {
+            callbacks++;
+            assert.ok(calls[0].id);
+            const result = await actualTool(
+              runtime.respan,
+              calls[0].id,
+              calls[0].name,
+              calls[0].args,
+              async () => ({ city: "Tokyo", temperature: 0 }),
+            );
+            return [
+              {
+                functionResponse: {
+                  id: calls[0].id,
+                  name: calls[0].name,
+                  response: result,
+                },
+              },
+            ];
+          },
+        };
+        await client.models.generateContent({
+          model,
+          contents: "Native AFC Weather",
+          config: { tools: [callable] },
+        });
+        if (!live) assert.equal(callbacks, 1);
+      }
+      if (scenario === 6) {
+        const result = await client.models.embedContent({
+          model: process.env.VERTEXAI_EMBEDDING_MODEL ?? "text-embedding-005",
+          contents: ["Fixture embedding"],
+        });
+        if (!live) assert.equal(result.embeddings?.[0].values?.length, 5001);
+      }
+      if (scenario === 7) {
+        await client.models.generateImages({
+          model: "imagen-4.0-generate-001",
+          prompt: "Fixture image",
+        });
+        const operation = await client.models.generateVideos({
+          model: "veo-3.0-generate-001",
+          source: { prompt: "Fixture video" },
+        });
+        if (!live) assert.equal(operation.done, false);
+      }
+      if (scenario === 8) {
+        await client.models.generateContent({
+          model,
+          contents: "PRIVATE_SENTINEL",
+        });
+      }
+      if (scenario === 9) {
+        const vertex = new legacy.VertexAI(
+          live
+            ? {
+                project: requireLiveProject(),
+                location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
+              }
+            : {
+                project: "fixture-project",
+                location: "us-central1",
+                googleAuthOptions: { authClient: authClient as any },
+              },
+        );
+        await vertex
+          .getGenerativeModel({ model })
+          .generateContent("Legacy GA retained");
+        await vertex.preview
+          .getGenerativeModel({ model })
+          .generateContent("Legacy preview retained");
+        const chat = vertex.getGenerativeModel({ model }).startChat();
+        await chat.sendMessage("Legacy chat");
+        const stream = await chat.sendMessageStream("Legacy chat stream");
+        for await (const chunk of stream.stream) assert.ok(chunk);
+        await stream.response;
+      }
+      if (scenario === 10) {
+        await client.models.generateContent({
+          model,
+          contents: Array.from({ length: 80 }, (_, i) => ({
+            role: "user",
+            parts:
+              i === 0
+                ? [
+                    {
+                      functionCall: {
+                        id: "native-history-call",
+                        name: "tool_0",
+                        args: { x: 0 },
+                      },
+                      thoughtSignature: "native-history-signature",
+                    },
+                  ]
+                : i === 1
+                  ? [
+                      {
+                        functionResponse: {
+                          id: "native-history-call",
+                          name: "tool_0",
+                          response: { x: 0 },
+                          parts: [
+                            {
+                              inlineData: {
+                                mimeType: "image/png",
+                                data: "fixture-tool-image",
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ]
+                  : [{ text: `Fixture history ${i}` }],
+          })),
+          config: {
+            tools: [
+              {
+                functionDeclarations: Array.from({ length: 80 }, (_, i) => ({
+                  name: `tool_${i}`,
+                  parametersJsonSchema: {
+                    type: "object",
+                    properties: { x: { type: "integer" } },
+                    required: ["x"],
+                  },
+                  responseJsonSchema: {
+                    type: "object",
+                    properties: { x: { type: "integer" } },
+                  },
+                })),
+              },
+            ],
+          },
+        });
+      }
+      if (scenario === 11) {
+        await client.models.editImage({
+          model: "imagen-3.0-capability-001",
+          prompt: "Edit fixture",
+          referenceImages: [],
+        });
+        await client.models.upscaleImage({
+          model: "imagen-4.0-upscale-preview",
+          image: { imageBytes: "fixture", mimeType: "image/png" },
+          upscaleFactor: "x2",
+        });
+        await client.models.recontextImage({
+          model: "imagen-product-recontext-preview-06-30",
+          source: {
+            productImages: [
+              {
+                productImage: { imageBytes: "fixture", mimeType: "image/png" },
+              },
+            ],
+          },
+        });
+        await client.models.segmentImage({
+          model: "image-segmentation-001",
+          source: { image: { imageBytes: "fixture", mimeType: "image/png" } },
+          config: { mode: genai.SegmentMode.FOREGROUND },
+        });
+      }
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await runtime.close();
   }
-  return (response?.candidates ?? [])
-    .flatMap((candidate: any) => candidate?.content?.parts ?? [])
-    .map((part: any) => part?.text ?? "")
-    .filter(Boolean)
-    .join("");
-}
-
-export function functionCallsFromResponse(response: any): unknown[] {
-  return (response?.candidates ?? [])
-    .flatMap((candidate: any) => candidate?.content?.parts ?? [])
-    .map((part: any) => part?.functionCall)
-    .filter(Boolean);
+  if (privateContent)
+    for (const span of runtime.spans)
+      assert.ok(!JSON.stringify(span.attributes).includes("PRIVATE_SENTINEL"));
+  const children = runtime.spans.filter(
+    (span) => span.attributes["traceloop.span.kind"] !== "workflow",
+  );
+  if (!live)
+    assert.equal(
+      children.length,
+      [0, 1, 2, 2, 1, 3, 1, 2, 1, 4, 1, 4][scenario],
+    );
 }

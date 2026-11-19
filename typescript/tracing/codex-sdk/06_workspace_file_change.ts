@@ -1,6 +1,6 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import {
+  assert,
+  captured,
   codexThreadOptions,
   createCodex,
   createRespan,
@@ -8,45 +8,38 @@ import {
   logExampleResult,
   runWithCodexWorkflow,
   shutdownRespan,
-  withCodexRetries,
-  withTimeout,
+  LIVE,
 } from "./_shared.js";
-
-const workflowName = "codex-sdk-ts-file-change";
-const respan = createRespan("codex-sdk-typescript-file-change");
-
+const name = "codex-sdk-ts-file-change";
+const respan = createRespan(name);
 try {
-  const details = await runWithCodexWorkflow(respan, workflowName, async () =>
-    await withCodexRetries(workflowName, async () => {
-      const scratchDir = await createScratchWorkspace("file-change");
-      const codex = createCodex();
-      const thread = codex.startThread(
+  const summary = await runWithCodexWorkflow(respan, name, async () => {
+    const scratch = await createScratchWorkspace("file-change");
+    const result = await createCodex()
+      .startThread(
         codexThreadOptions({
-          workingDirectory: scratchDir,
+          workingDirectory: scratch,
           sandboxMode: "workspace-write",
         }),
-      );
-      const result = await withTimeout(
-        thread.run(
-          "Create a file named codex_respan_note.txt containing exactly: Respan Codex SDK file change traced. Then reply with done.",
-        ),
-        workflowName,
-      );
-      const changedFile = path.join(scratchDir, "codex_respan_note.txt");
-      const fileExists = await fs.access(changedFile).then(() => true, () => false);
-      const fileContent = fileExists ? await fs.readFile(changedFile, "utf8") : "";
-
-      return {
-        finalResponse: result.finalResponse,
-        fileExists,
-        fileContent: fileContent.trim(),
-        scratchDir,
-        itemTypes: result.items.map((item) => item.type),
-      };
-    }),
-  );
-
-  logExampleResult(workflowName, details);
+      )
+      .run("Create controlled.txt containing controlled text.");
+    if (!LIVE) assert.ok(result.items.some((i) => i.type === "file_change"));
+    return {
+      finalResponse: result.finalResponse,
+      itemTypes: result.items.map((i) => i.type),
+    };
+  });
+  if (!LIVE) {
+    const file = captured.find(
+      (s) =>
+        JSON.parse(String(s.attrs["respan.metadata"] || "{}"))
+          .codex_item_type === "file_change",
+    )!;
+    assert.deepEqual(JSON.parse(String(file.attrs["traceloop.entity.input"])), [
+      { path: "controlled.txt", kind: "update" },
+    ]);
+  }
+  logExampleResult(name, summary);
 } finally {
   await shutdownRespan(respan);
 }
