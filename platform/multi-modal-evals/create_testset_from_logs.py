@@ -1,7 +1,7 @@
 import json
 from .testsets import create_testset, create_testset_rows
 from .logs import get_logs
-from .constants import EVALUATION_IDENTIFIER
+from .constants import EVAL_RUN_FILTER_KEY, EVAL_RUN_ID, EVAL_RUN_METADATA_KEY
 from datetime import datetime, timedelta
 
 
@@ -22,7 +22,7 @@ def extract_variables_from_logs(logs_data):
                 "is_checking_weather": variables.get('is_checking_weather', False),
                 "has_image": 'image' in variables,
                 "customer_id": respan_params.get('customer_identifier', ''),
-                "evaluation_id": respan_params.get('evaluation_identifier', '')
+                "eval_run": (log.get('metadata') or {}).get(EVAL_RUN_METADATA_KEY, '')
             }
             
             # Add expected behavior based on variables
@@ -46,13 +46,13 @@ def extract_variables_from_logs(logs_data):
 def create_travel_agent_testset():
     """Create a testset from travel agent logs"""
     
-    # Fetch recent logs for our evaluation identifier
+    # Fetch recent logs tagged with our eval run
     logs = get_logs(
         start_time=datetime.now() - timedelta(days=1),
         end_time=datetime.now(),
         filters={
-            "evaluation_identifier": {
-                "value": EVALUATION_IDENTIFIER,
+            EVAL_RUN_FILTER_KEY: {
+                "value": EVAL_RUN_ID,
             },
         },
     )
@@ -74,7 +74,7 @@ def create_travel_agent_testset():
             {"field": "is_checking_weather"},
             {"field": "has_image"},
             {"field": "customer_id"},
-            {"field": "evaluation_id"},
+            {"field": "eval_run"},
             {"field": "expected_tools"}
         ]
     )

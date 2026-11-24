@@ -10,4 +10,8 @@ RESPAN_BASE_HEADERS = {
     "Content-Type": "application/json",
 }
 
-EVALUATION_IDENTIFIER = "traveling_agent_eval"
+# Every agent run tags its logs with this metadata key, so they can be listed
+# later with the `metadata__eval_run` filter.
+EVAL_RUN_METADATA_KEY = "eval_run"
+EVAL_RUN_ID = "traveling_agent_eval"
+EVAL_RUN_FILTER_KEY = f"metadata__{EVAL_RUN_METADATA_KEY}"

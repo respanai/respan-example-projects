@@ -5,7 +5,10 @@ import json
 dotenv.load_dotenv(override=True)
 from openai import OpenAI
 from pathlib import Path
-from example_workflows.multi_modal_tool_evals.constants import EVALUATION_IDENTIFIER
+from example_workflows.multi_modal_tool_evals.constants import (
+    EVAL_RUN_ID,
+    EVAL_RUN_METADATA_KEY,
+)
 
 resource_path = Path(__file__).parent / "assets"
 
@@ -13,8 +16,6 @@ client = OpenAI(
     base_url=os.getenv("RESPAN_BASE_URL"),
     api_key=os.getenv("RESPAN_API_KEY"),
 )
-
-EVALUATION_IDENTIFIER = EVALUATION_IDENTIFIER
 
 # Travel Assistant Agent with 3 Tools
 
@@ -236,7 +237,7 @@ def run_demo_agent(variables: dict, customer_id: str, interactive: bool = True):
             ),
         },
         "customer_identifier": customer_id,
-        "evaluation_identifier": EVALUATION_IDENTIFIER,
+        "metadata": {EVAL_RUN_METADATA_KEY: EVAL_RUN_ID},
     }
 
     response = client.chat.completions.create(
