@@ -7,7 +7,6 @@
             "full_unique_id": "444303170c6a43d1b0a1e794542aa3e3",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_001_sarah",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -205,7 +204,6 @@
                         }
                     },
                     "customer_identifier": "customer_001_sarah",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -439,8 +437,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_001_sarah",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_001_sarah"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "4443031",
@@ -603,7 +600,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_001_sarah",
             "customer_email": "",
             "customer_name": "",
@@ -625,7 +621,6 @@
             "full_unique_id": "872a595174d445deae14fd0c570494ee",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_001_sarah",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -766,7 +761,6 @@
                         }
                     },
                     "customer_identifier": "customer_001_sarah",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -969,8 +963,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_001_sarah",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_001_sarah"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "872a595",
@@ -1107,7 +1100,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_001_sarah",
             "customer_email": "",
             "customer_name": "",
@@ -1129,7 +1121,6 @@
             "full_unique_id": "a3fabb00586e4f5d8511ade8a19a9341",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_002_mike",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -1375,7 +1366,6 @@
                         }
                     },
                     "customer_identifier": "customer_002_mike",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -1675,8 +1665,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_002_mike",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_002_mike"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "a3fabb0",
@@ -1908,7 +1897,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_002_mike",
             "customer_email": "",
             "customer_name": "",
@@ -1930,7 +1918,6 @@
             "full_unique_id": "4f64359a3e7e43979ccd505a32be3569",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_001_sarah",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -2108,7 +2095,6 @@
                         "override_params": {}
                     },
                     "customer_identifier": "customer_001_sarah",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -2370,8 +2356,7 @@
                     },
                     "override_params": {}
                 },
-                "customer_identifier": "customer_001_sarah",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_001_sarah"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "4f64359",
@@ -2609,7 +2594,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_001_sarah",
             "customer_email": "",
             "customer_name": "",
@@ -2631,7 +2615,6 @@
             "full_unique_id": "f65ff740b984439c9038b65c4c261e2d",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_001_sarah",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -2877,7 +2860,6 @@
                         }
                     },
                     "customer_identifier": "customer_001_sarah",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -3177,8 +3159,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_001_sarah",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_001_sarah"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "f65ff74",
@@ -3446,7 +3427,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_001_sarah",
             "customer_email": "",
             "customer_name": "",
@@ -3468,7 +3448,6 @@
             "full_unique_id": "40d6608594f347329c00a86a8109d531",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_001_sarah",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -3739,7 +3718,6 @@
                         }
                     },
                     "customer_identifier": "customer_001_sarah",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -4012,8 +3990,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_001_sarah",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_001_sarah"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "40d6608",
@@ -4210,7 +4187,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_001_sarah",
             "customer_email": "",
             "customer_name": "",
@@ -4232,7 +4208,6 @@
             "full_unique_id": "c029bbca8b804cf686ceec146adab5f7",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_002_mike",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -4373,7 +4348,6 @@
                         }
                     },
                     "customer_identifier": "customer_002_mike",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -4576,8 +4550,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_002_mike",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_002_mike"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "c029bbc",
@@ -4714,7 +4687,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_002_mike",
             "customer_email": "",
             "customer_name": "",
@@ -4736,7 +4708,6 @@
             "full_unique_id": "44d31230d99b48ed87dca0f334af47a8",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_001_sarah",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -5055,7 +5026,6 @@
                         }
                     },
                     "customer_identifier": "customer_001_sarah",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -5394,8 +5364,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_001_sarah",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_001_sarah"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "44d3123",
@@ -5697,7 +5666,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_001_sarah",
             "customer_email": "",
             "customer_name": "",
@@ -5719,7 +5687,6 @@
             "full_unique_id": "2bd571ccc5de4b7e9f1460c131f3b10e",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_002_mike",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -5897,7 +5864,6 @@
                         "override_params": {}
                     },
                     "customer_identifier": "customer_002_mike",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -6159,8 +6125,7 @@
                     },
                     "override_params": {}
                 },
-                "customer_identifier": "customer_002_mike",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_002_mike"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "2bd571c",
@@ -6398,7 +6363,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_002_mike",
             "customer_email": "",
             "customer_name": "",
@@ -6420,7 +6384,6 @@
             "full_unique_id": "89ba5eb57d734674ae4ca4603247919a",
             "unique_organization_id": "8264a3f4-40c7-476a-97d1-96908127ea21",
             "respan_params": {
-                "evaluation_identifier": "traveling_agent_eval",
                 "customer_identifier": "customer_001_sarah",
                 "field_name": "data: ",
                 "delimiter": "\n\n",
@@ -6723,7 +6686,6 @@
                         }
                     },
                     "customer_identifier": "customer_001_sarah",
-                    "evaluation_identifier": "traveling_agent_eval",
                     "respan_params": {
                         "is_log_omitted": false
                     }
@@ -7054,8 +7016,7 @@
                         ]
                     }
                 },
-                "customer_identifier": "customer_001_sarah",
-                "evaluation_identifier": "traveling_agent_eval"
+                "customer_identifier": "customer_001_sarah"
             },
             "prompt_id": "0f25d74abdd94cc3918f680e65ebb69e",
             "unique_id": "89ba5eb",
@@ -7313,7 +7274,6 @@
             "log_type": "chat",
             "environment": "prod",
             "stream": false,
-            "evaluation_identifier": "traveling_agent_eval",
             "customer_identifier": "customer_001_sarah",
             "customer_email": "",
             "customer_name": "",

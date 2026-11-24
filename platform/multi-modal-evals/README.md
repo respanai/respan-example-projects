@@ -7,11 +7,11 @@ This project demonstrates a complete workflow for evaluating LLM agents with too
 ### 1. Agent Demo & Log Generation
 - **Agent**: `agent.py` - Travel assistant with 4 tools (search_places, check_weather, find_hotels, recommend_activities)
 - **Features**: Multi-modal inputs (text + images), prompt management, tool calls
-- **Output**: Logs with evaluation_identifier for filtering
+- **Output**: Logs tagged with `metadata.eval_run` for filtering
 
 ### 2. Log Management
 - **Logs API**: `logs/logs.py` - Fetch logs by time range and filters
-- **Usage**: `main.py` - Get logs filtered by evaluation_identifier
+- **Usage**: `main.py` - Get logs filtered by `metadata__eval_run`
 
 ### 3. Evaluator Creation  
 - **Evaluators API**: `evaluators/evaluators.py` - Create custom LLM evaluators
