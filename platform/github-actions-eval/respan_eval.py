@@ -100,6 +100,9 @@ if os.environ.get("GITHUB_STEP_SUMMARY"):
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
         f.write(summary + "\n")
 
+# An annotation puts the result on the run page and the pull request's checks.
 if average < MIN_SCORE:
+    print(f"::error title=Respan eval::Average score {average:.2f} is below the threshold {MIN_SCORE}")
     sys.exit(f"FAIL: average score {average:.2f} is below {MIN_SCORE}")
+print(f"::notice title=Respan eval::Average score {average:.2f} meets the threshold {MIN_SCORE}")
 print(f"PASS: average score {average:.2f} >= {MIN_SCORE}")
