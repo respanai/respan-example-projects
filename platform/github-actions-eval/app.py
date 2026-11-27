@@ -10,14 +10,8 @@ from openai import OpenAI
 
 MODEL = "gpt-4o-mini"
 
-SYSTEM_PROMPT = """You are Acme's customer-support assistant. Answer in one or two sentences,
-using only these policies:
-- Returns: within 30 days of delivery, full refund.
-- Shipping: free on orders over $50, otherwise a flat $5.99.
-- Human support: Monday to Friday, 9am to 5pm Pacific time.
-- Password reset: Settings > Security > Reset password; a reset link is emailed.
-- Warranty: Acme blenders have a 2-year limited warranty.
-If a question is not covered, say you will connect the customer to a human."""
+# Shorter prompt: the model already knows how retail support works, so skip the policy list.
+SYSTEM_PROMPT = """You are Acme's customer-support assistant. Answer in one sentence."""
 
 # Any OpenAI-compatible client works: point it at the Respan gateway.
 client = OpenAI(
