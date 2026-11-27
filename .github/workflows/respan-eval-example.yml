@@ -1,0 +1,53 @@
+# Example: evaluate platform/github-actions-eval on every pull request that changes it.
+# No Respan secret is stored: the job trades GitHub's OIDC token for a 1-hour Respan API key.
+# One-time setup in Respan: a GitHub Actions trust rule on your project for this repository.
+# See platform/github-actions-eval/README.md.
+name: respan-eval-example
+
+on:
+  pull_request:
+    paths:
+      - "platform/github-actions-eval/**"
+      - ".github/workflows/respan-eval-example.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write # lets the job request a GitHub OIDC token
+  contents: read
+
+env:
+  RESPAN_BASE_URL: ${{ vars.RESPAN_BASE_URL || 'https://api.respan.ai' }}
+  RESPAN_PROJECT_ID: 84996fb2-fde5-4737-a447-77e070eb5726 # the project that trusts this repo
+  RESPAN_DATASET_ID: 72b1bdcf3e2c4f2283bd2e666d47c1a2 # golden questions + expected answers
+  RESPAN_EVALUATOR_ID: 236018a291ab410faef66bbe7a3eb5df # LLM judge, scores 1-5
+  MIN_SCORE: "4" # fail the PR when the average score drops below this
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/github-actions-eval
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get a Respan API key
+        run: |
+          oidc=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=respan" | jq -r .value)
+          key=$(curl -sSf -X POST "$RESPAN_BASE_URL/api/integrations/github-actions/token/" \
+            -H "Content-Type: application/json" \
+            -d "{\"token\": \"$oidc\", \"project_id\": \"$RESPAN_PROJECT_ID\"}" | jq -r .api_key)
+          echo "::add-mask::$key"
+          echo "RESPAN_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run the new code over the dataset and score it
+        env:
+          RUN_LABEL: "${{ github.event.pull_request && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
+        run: python respan_eval.py
