@@ -52,6 +52,7 @@ platform/
   demo-setup-typescript/  # TypeScript scripts for demo account setup
   experiments/            # Experiment workflow notebooks
   multi-modal-evals/      # Multi-modal tool evaluation workflows
+  github-actions-eval/    # Score an app on every pull request in GitHub Actions, with no stored Respan secret
 ```
 
 ## Getting Started
